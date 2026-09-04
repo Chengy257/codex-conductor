@@ -1,0 +1,7 @@
+interface:
+  display_name: "Sol Conductor"
+  short_description: "Plan with Sol; delegate bounded work to Luna"
+  default_prompt: "Use $sol-conductor to supervise this implementation with Sol and delegate bounded execution to Luna."
+
+policy:
+  allow_implicit_invocation: false
