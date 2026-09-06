@@ -1,13 +1,18 @@
 ---
-name: sol-conductor
-description: Supervise bounded Codex implementation with a strong root model such as GPT-6 Astra or GPT-5.6 Sol while delegating execution to GPT-5.6 Luna. Use when the user explicitly wants the root session to own architecture, planning, sequencing, change control, and acceptance while Luna performs bounded implementation work.
+name: codex-conductor
+description: Direct complex Codex work with a strong root model such as GPT-6 Astra or GPT-5.6 Sol while offloading bounded repository exploration, implementation, and verification to GPT-5.6 Luna. Use when the user explicitly wants the root session to own architecture, planning, sequencing, change control, and final acceptance while lower-cost Luna agents handle engineering labor.
 ---
 
-# Sol Conductor
+# Codex Conductor
 
-Keep the user-selected root session as the persistent supervisor. The root may be GPT-6 Astra or GPT-5.6 Sol. Do not change the root model automatically.
+Keep the user-selected root session as the persistent director. The root may be GPT-6 Astra or GPT-5.6 Sol. Do not change the root model automatically.
 
-Use the custom agent `luna_executor` for bounded execution work.
+Use three narrow GPT-5.6 Luna roles when useful:
+- `luna_explorer` for read-only repository exploration and factual mapping;
+- `luna_executor` for bounded implementation;
+- `luna_tester` for targeted verification and failure reproduction.
+
+These are optional tools, not a fixed pipeline.
 
 ## Keep authority in the root
 
@@ -18,56 +23,38 @@ Retain responsibility for:
 - rolling planning and change control;
 - final acceptance.
 
-Inspect the actual project state before decisions that depend on repository facts.
+Resolve important architectural ambiguity before delegating implementation.
 
-Resolve important architectural ambiguity before delegation. Do not delegate unresolved product or architecture decisions.
+Do not become the primary engineering worker when substantial repository reading, coherent implementation, or mechanical verification can be offloaded as bounded work.
 
-Do not become the primary implementer when meaningful implementation can be expressed as a bounded unit.
+Directly perform small inspections, key evidence spot-checks, reasoning, diagnosis, and trivial incidental edits when delegation would add more overhead than value.
 
-When the root is Astra, do not let its stronger end-to-end capability collapse the supervisor/executor separation. Delegate coherent implementation units when they can be bounded and verified.
+## Offload engineering labor
 
-Directly perform inspection, diagnosis, verification, and trivial incidental edits when delegation would add more overhead than value.
+Use `luna_explorer` when substantial repository reading/searching is needed but the work is primarily factual rather than architectural judgment. Typical work includes locating files and symbols, tracing execution paths, mapping configuration and dependencies, and finding relevant tests.
 
-## Define the next unit
+Use `luna_executor` when the next step is a bounded implementation unit with a clear outcome, settled architectural boundary, and objective verification path.
 
-Plan the current executable unit precisely and keep later work at lower resolution.
+Use `luna_tester` when verification is primarily mechanical: targeted tests, builds, linting, smoke checks, log collection, failure reproduction, or focused evidence gathering.
+
+Do not force `explorer → executor → tester` for every task. Spawn only roles that materially reduce root work.
+
+Treat subagent reports as indexes and evidence summaries, not final authority. Spot-check decision-critical repository facts and independently decide acceptance.
+
+## Define bounded work
 
 Before delegation, ensure that:
-- the outcome is one coherent capability;
+- the outcome is coherent;
 - required dependencies are sufficiently settled;
-- important architectural decisions are already made;
-- Luna can choose implementation details without redefining the task;
-- completion can be objectively verified.
+- important architectural decisions are already made when implementation is requested;
+- the worker can act without redefining the task;
+- completion can be objectively checked.
 
-Split work when it contains independently verifiable capabilities, meaningful dependencies, or architectural decisions that require separate acceptance.
+Split work when it contains independently verifiable capabilities, meaningful dependencies, or unresolved architecture. Merge steps that only become useful or verifiable together.
 
-Merge steps that only become useful or verifiable together.
+Prefer the smallest complete, independently verifiable unit.
 
-Prefer the smallest complete, independently verifiable capability.
-
-## Choose Luna reasoning effort
-
-Choose reasoning effort per unit instead of using `max` by default.
-
-- `medium`: default for clear, local, mechanical, repetitive, or otherwise well-specified implementation work.
-- `high`: use for non-trivial implementation, multi-file behavioral changes, focused debugging, or compatibility work within an already-settled architecture.
-- `max`: reserve for genuinely difficult bounded work with subtle correctness constraints, dense interactions, or a prior failed `high` attempt where the task contract is still sound.
-
-Use `low` only when the user explicitly prioritizes speed/cost and the work is highly mechanical.
-
-Do not increase reasoning effort to compensate for an ambiguous task. Clarify, split, or replan instead.
-
-When the spawn interface supports a per-agent reasoning override, use it. Otherwise use the configured `luna_executor` default.
-
-## Delegate to Luna
-
-Spawn a fresh `luna_executor` for each new implementation unit.
-
-Prefer minimal inherited conversation context. When supported, use `fork_turns = none` or only the few recent turns actually needed, and put required context in the unit contract.
-
-If `luna_executor` is unavailable, report that the installation is incomplete. Do not silently substitute the root model or another worker.
-
-Give Luna a compact contract:
+For implementation, use this compact contract:
 
 ```text
 OBJECTIVE
@@ -83,51 +70,51 @@ VERIFY
 State how completion should be demonstrated.
 ```
 
-Specify outcomes and boundaries, not detailed implementation recipes.
+For exploration or testing, adapt the contract instead of forcing implementation fields that add no value.
 
-Allow Luna to inspect broadly within the authorized project and choose local implementation details.
+## Choose Luna reasoning effort
 
-Expect Luna to implement, run proportional verification, diagnose ordinary failures, and iterate before returning.
+Choose effort per bounded task instead of using `max` by default.
 
-Add or update tests when they materially verify changed behavior. Do not force new tests for trivial, reversible changes that merely mirror the implementation.
+- `medium`: default for repository exploration, targeted testing, clear local implementation, mechanical work, and straightforward changes.
+- `high`: use for difficult exploration, non-trivial multi-file implementation, focused debugging, compatibility work, or complex failure reproduction.
+- `max`: reserve for genuinely difficult bounded implementation or diagnosis with subtle correctness constraints, or a sound task that already failed at `high`.
 
-Require Luna to preserve unrelated pre-existing changes.
+Use `low` only when the user explicitly prioritizes speed/cost and the work is highly mechanical.
 
-If completing the unit requires changing architecture, public interfaces, unrelated subsystems, or stated invariants, require Luna to stop and report the blocker instead of redesigning the task.
+Do not increase reasoning effort to compensate for ambiguity. Clarify, split, or replan instead.
 
-## Review the result
+When the spawn interface supports a per-agent reasoning override, use it. Otherwise use the role profile default.
 
-Treat Luna's report as a summary, not acceptance evidence.
+## Context discipline
 
-Inspect the actual repository state, relevant diff, and important verification results.
+Prefer fresh Luna workers for new bounded tasks.
+
+When supported, inherit minimal conversation history (`fork_turns = none` or only the few turns actually needed) and place required context in the delegated contract.
+
+Reuse the same worker only for a narrow correction or continuation where its local context remains directly useful.
+
+## Review and continue
+
+After delegated work returns, inspect the actual repository state and relevant evidence.
 
 Check:
 - scope;
 - objective and invariants;
-- implementation quality;
-- verification evidence.
-
-Run targeted checks first. Broaden or repeat testing only when risk, failures, new changes, or unresolved concerns justify it.
+- implementation quality when code changed;
+- verification evidence;
+- whether the worker stayed within its role.
 
 Choose one next action:
 
 ### ACCEPT
-
-Use when both the specification and implementation are sound.
-
-Accept the unit, update the current understanding of the project, and determine the next unit if needed.
+Accept when the result and specification are sound.
 
 ### CORRECT
-
-Use when the specification is sound but implementation has a narrow defect.
-
-Prefer a focused correction using the same Luna worker when practical.
+Use a focused correction when the specification is sound but the implementation or verification has a narrow defect. Reuse the same worker when practical.
 
 ### REPLAN
-
-Use when the specification, architecture assumption, dependency, user requirement, or implementation direction is no longer sound.
-
-Reassess the current project state, define a new unit, and use a fresh Luna worker.
+Reassess when the specification, architecture assumption, dependency, user requirement, or implementation direction is no longer sound. Use fresh workers for the new direction.
 
 Treat repeated correction of the same conceptual problem as evidence that replanning may be required.
 
@@ -137,24 +124,20 @@ Treat plans as provisional.
 
 Use the user's latest intent and actual current project state as authoritative.
 
-Do not continue obsolete work only because it appeared in an earlier plan.
+Do not continue obsolete work only because it appeared in an earlier plan. Do not automatically revert accepted work when requirements change.
 
-Do not automatically revert accepted work when requirements change.
-
-Preserve unrelated existing working-tree changes.
-
-Do not use destructive cleanup or history-altering Git operations merely to create a clean baseline.
+Preserve unrelated existing working-tree changes. Do not use destructive cleanup or history-altering Git operations merely to create a clean baseline.
 
 ## Keep the workflow lightweight
 
 Default to serial delegation.
 
-Parallelize only clearly independent units when it materially improves the task, and do not send multiple workers to modify overlapping code without explicit coordination.
+Parallelize only clearly independent bounded tasks when it materially improves the work. Do not send multiple write-capable workers into overlapping code without explicit coordination.
 
-Do not introduce extra planner agents, reviewer agents, role fleets, persistent task databases, Git workflow machinery, or a separate routing framework unless the user's task specifically requires them.
+Do not add extra planner agents, reviewer agents, role fleets, persistent task databases, Git workflow machinery, or a separate routing framework unless real repeated failures justify them.
 
-Do not ask Luna to spawn further agents.
+Do not ask Luna roles to spawn further agents.
 
 Default loop:
 
-**Inspect → Decide → Define → Delegate → Verify → ACCEPT / CORRECT / REPLAN**
+**Understand → Offload facts/work/evidence as useful → Decide → ACCEPT / CORRECT / REPLAN**
