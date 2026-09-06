@@ -1,7 +1,7 @@
 interface:
-  display_name: "Sol Conductor"
-  short_description: "Astra/Sol plans; Luna executes bounded work"
-  default_prompt: "Use $sol-conductor with the current GPT-6 Astra or GPT-5.6 Sol root session to supervise this implementation and delegate bounded execution to GPT-5.6 Luna."
+  display_name: "Codex Conductor"
+  short_description: "Astra/Sol directs; Luna explores, executes, and tests"
+  default_prompt: "Use $codex-conductor with the current GPT-6 Astra or GPT-5.6 Sol root session to direct this task and offload bounded exploration, implementation, and verification work to GPT-5.6 Luna."
 
 policy:
   allow_implicit_invocation: false
