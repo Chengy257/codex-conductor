@@ -10,7 +10,7 @@ Lightweight **GPT-6 Sol director / GPT-6 Luna worker** orchestration through nat
     read-only*         workspace-write    focused verification
     GPT-6 Luna         GPT-6 Luna         GPT-6 Luna
 
-*Explorer's read-only sandbox is the intended configuration, not yet verified as an independent child sandbox when the parent is workspace-write. Verify effective sandbox in child session telemetry; do not assume TOML alone enforces isolation.*
+*Runtime A/B verification on 2026-09-23: with a workspace-write root, Explorer's effective child sandbox was workspace-write despite its read-only TOML; with a read-only root, Explorer was read-only. Thus `sandbox_mode = "read-only"` in this named role is an intended configuration, **not an independently enforced sandbox boundary on the tested Codex installation**. Its instruction not to modify files is behavioral only. For mandatory read-only isolation, launch a separate root session with `codex --model gpt-6-sol --sandbox read-only` and invoke Explorer there. Revalidate after Codex updates.*
 
 The roles are optional tools, not a mandatory pipeline. Sol can do small tasks directly. Delegate when repository exploration, substantial implementation, or mechanical verification would otherwise consume root context.
 
@@ -68,7 +68,7 @@ Each named role file explicitly pins `model = "gpt-6-luna"`. Explorer and Tester
 | Role | Model | Effort | Sandbox |
 | --- | --- | --- | --- |
 | Root (selected by user) | GPT-6 Sol | medium or user-selected | user setting |
-| luna_explorer | GPT-6 Luna | medium | read-only |
+| luna_explorer | GPT-6 Luna | medium | read-only requested; effective sandbox followed parent in A/B tests |
 | luna_executor | GPT-6 Luna | max | workspace-write |
 | luna_tester | GPT-6 Luna | medium | workspace-write |
 
