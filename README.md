@@ -7,8 +7,10 @@ Lightweight **GPT-6 Sol director / GPT-6 Luna worker** orchestration through nat
     GPT-6 Sol root: architecture / plan / review / ACCEPT-CORRECT-REPLAN
        |                   |                 |
     luna_explorer      luna_executor      luna_tester
-    read-only          workspace-write    focused verification
+    read-only*         workspace-write    focused verification
     GPT-6 Luna         GPT-6 Luna         GPT-6 Luna
+
+*Explorer's read-only sandbox is the intended configuration, not yet verified as an independent child sandbox when the parent is workspace-write. Verify effective sandbox in child session telemetry; do not assume TOML alone enforces isolation.*
 
 The roles are optional tools, not a mandatory pipeline. Sol can do small tasks directly. Delegate when repository exploration, substantial implementation, or mechanical verification would otherwise consume root context.
 
@@ -61,13 +63,13 @@ The root uses ACCEPT / CORRECT / REPLAN after inspecting the actual diff and evi
 
 ## Model precedence and effort
 
-Each named role file explicitly pins `model = "gpt-6-luna"` and medium effort. Global default_subagent_model is a fallback, not a substitute. According to current Codex documentation, explicit settings in a named custom-agent file can take precedence over spawn parameters and global defaults. **Do not promise that per-spawn effort overrides a pinned role file without verifying runtime behavior.** Add a separately named high/max role if an alternate stable profile is needed.
+Each named role file explicitly pins `model = "gpt-6-luna"`. Explorer and Tester use medium effort; Executor uses max effort. Global default_subagent_model is a fallback, not a substitute. According to current Codex documentation, explicit settings in a named custom-agent file can take precedence over spawn parameters and global defaults. **Do not promise that per-spawn effort overrides a pinned role file without verifying runtime behavior.** Use a separately named role if another stable effort profile is needed.
 
 | Role | Model | Effort | Sandbox |
 | --- | --- | --- | --- |
 | Root (selected by user) | GPT-6 Sol | medium or user-selected | user setting |
 | luna_explorer | GPT-6 Luna | medium | read-only |
-| luna_executor | GPT-6 Luna | medium | workspace-write |
+| luna_executor | GPT-6 Luna | max | workspace-write |
 | luna_tester | GPT-6 Luna | medium | workspace-write |
 
 Default serial delegation, optional concurrency of two for genuinely independent tasks. Never allow overlapping write workers without explicit ownership.
