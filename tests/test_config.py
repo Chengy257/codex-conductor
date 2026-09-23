@@ -7,19 +7,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLES = {
-    "luna_explorer": "read-only",
-    "luna_executor": "workspace-write",
-    "luna_tester": "workspace-write",
+    "luna_explorer": ("read-only", "medium"),
+    "luna_executor": ("workspace-write", "max"),
+    "luna_tester": ("workspace-write", "medium"),
 }
 
 class CodexConductorConfigTests(unittest.TestCase):
     def test_role_configuration(self):
-        for name, sandbox in ROLES.items():
+        for name, (sandbox, effort) in ROLES.items():
             with self.subTest(role=name):
                 agent = tomllib.loads((ROOT / "codex-agents" / f"{name}.toml").read_text())
                 self.assertEqual(agent["name"], name)
                 self.assertEqual(agent["model"], "gpt-6-luna")
-                self.assertEqual(agent["model_reasoning_effort"], "medium")
+                self.assertEqual(agent["model_reasoning_effort"], effort)
                 self.assertEqual(agent["sandbox_mode"], sandbox)
                 self.assertTrue(agent["developer_instructions"].strip())
                 self.assertIn("Do not spawn agents", agent["developer_instructions"])
