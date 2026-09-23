@@ -1,143 +1,54 @@
 ---
 name: codex-conductor
-description: Direct complex Codex work with a strong root model such as GPT-6 Astra or GPT-5.6 Sol while offloading bounded repository exploration, implementation, and verification to GPT-5.6 Luna. Use when the user explicitly wants the root session to own architecture, planning, sequencing, change control, and final acceptance while lower-cost Luna agents handle engineering labor.
+description: Coordinate complex Codex work with a user-selected GPT-6 Sol root directing bounded GPT-6 Luna explorer, executor, and tester subagents. Use for architectural ownership, task sequencing, implementation delegation, evidence review, and final acceptance.
 ---
 
-# Codex Conductor
+# Codex Conductor — GPT-6 Sol / Luna
 
-Keep the user-selected root session as the persistent director. The root may be GPT-6 Astra or GPT-5.6 Sol. Do not change the root model automatically.
+**The user selects GPT-6 Sol for the root session; this skill does not silently switch models.** Sol owns architecture, planning, sequencing, permissions, change control, review, and final acceptance. GPT-6 Luna performs bounded engineering work through three optional native Codex roles.
 
-Use three narrow GPT-5.6 Luna roles when useful:
-- `luna_explorer` for read-only repository exploration and factual mapping;
-- `luna_executor` for bounded implementation;
-- `luna_tester` for targeted verification and failure reproduction.
+## Model-routing contract
 
-These are optional tools, not a fixed pipeline.
+- Root: GPT-6 Sol (reasoning effort selected by the user, ordinarily medium or high).
+- Spawned luna_explorer, luna_executor, and luna_tester: explicitly pinned to gpt-6-luna in their role TOML files.
+- Recommended user config: agents.default_subagent_model = "gpt-6-luna" as a fallback for unnamed workers. Named role pins take precedence.
+- Never rely only on prose, inherited root settings, or the default model. Before consequential delegation, inspect the effective named-role configuration. If a child is observed using Sol or its effective model is uncertain, report the routing defect rather than silently consuming root-model quota.
+- Reasoning: default medium for routine role work; high for difficult bounded debugging or multicomponent compatibility; max only when supported and justified. A requested override must be checked against the effective role setting: role TOML model/effort can take precedence over spawn parameters.
+- Install role files from codex-agents/ into ~/.codex/agents/ and restart Codex.
 
-## Keep authority in the root
+## Delegate optional bounded roles
 
-Retain responsibility for:
-- interpreting the user's latest intent;
-- architecture and technical decisions;
-- task decomposition and execution order;
-- rolling planning and change control;
-- final acceptance.
+- luna_explorer (read-only): codebase search, trace execution and dependencies, map tests, report evidence with file paths; do not make architectural decisions.
+- luna_executor (workspace-write): implement independently verifiable work inside settled architecture, add proportional tests; do not commit/push unless explicitly authorized.
+- luna_tester (workspace-write for test artifacts): focused tests, failure reproduction, and exact command/outcome evidence; do not redesign production code.
 
-Resolve important architectural ambiguity before delegating implementation.
+No mandatory explorer → executor → tester chain. Sol may handle trivial work directly. Do not spawn a redundant tester when executor evidence suffices. Luna agents must not spawn more agents.
 
-Do not become the primary engineering worker when substantial repository reading, coherent implementation, or mechanical verification can be offloaded as bounded work.
+## Bounded handoff contract
 
-Directly perform small inspections, key evidence spot-checks, reasoning, diagnosis, and trivial incidental edits when delegation would add more overhead than value.
+OBJECTIVE: One coherent outcome.
+PRIMARY SCOPE: Relevant files/modules and edit boundaries.
+INVARIANTS: Required interfaces, compatibility, behavior, and preserved files.
+VERIFY: Focused commands/tests and objective acceptance criteria.
+RETURN: Modified files, exact verification outcomes, open risks and blockers.
 
-## Offload engineering labor
+For exploration and testing, adapt these fields. If scope or interface decisions are unsettled, Sol decides before implementation. Luna reports blockers instead of expanding scope.
 
-Use `luna_explorer` when substantial repository reading/searching is needed but the work is primarily factual rather than architectural judgment. Typical work includes locating files and symbols, tracing execution paths, mapping configuration and dependencies, and finding relevant tests.
+## Review and advance
 
-Use `luna_executor` when the next step is a bounded implementation unit with a clear outcome, settled architectural boundary, and objective verification path.
+Sol checks actual diff and decision-critical test evidence before choosing:
+- ACCEPT: completed with sound evidence.
+- CORRECT: bounded implementation defect and sound specification; reuse worker if useful.
+- REPLAN: architecture, assumptions, dependencies, or requirements changed; issue a new contract.
 
-Use `luna_tester` when verification is primarily mechanical: targeted tests, builds, linting, smoke checks, log collection, failure reproduction, or focused evidence gathering.
+Preserve unrelated changes and avoid destructive Git operations. Default to serial delegation; parallelize only independent read-only work or nonoverlapping write scopes with clear ownership. Prefer fresh workers supplied with explicit context.
 
-Do not force `explorer → executor → tester` for every task. Spawn only roles that materially reduce root work.
+## Proportional verification and routing smoke checks
 
-Treat subagent reports as indexes and evidence summaries, not final authority. Spot-check decision-critical repository facts and independently decide acceptance.
+After installing or upgrading Codex, run a tiny explorer lookup, a reversible bounded executor change, and a focused tester task. Record observed model, sandbox, commands, and results for each child. Static TOML validation alone cannot prove live runtime routing. If actual model telemetry is unavailable, record that routing is unverified.
 
-## Define bounded work
+Run targeted tests at each work unit, broader tests at milestones or when integration risks justify them. Never claim full-suite success without running it.
 
-Before delegation, ensure that:
-- the outcome is coherent;
-- required dependencies are sufficiently settled;
-- important architectural decisions are already made when implementation is requested;
-- the worker can act without redefining the task;
-- completion can be objectively checked.
+## Keep it lightweight
 
-Split work when it contains independently verifiable capabilities, meaningful dependencies, or unresolved architecture. Merge steps that only become useful or verifiable together.
-
-Prefer the smallest complete, independently verifiable unit.
-
-For implementation, use this compact contract:
-
-```text
-OBJECTIVE
-State the completed capability.
-
-PRIMARY SCOPE
-State where the work should primarily remain.
-
-INVARIANTS
-State behavior, compatibility, interfaces, or constraints that must remain true.
-
-VERIFY
-State how completion should be demonstrated.
-```
-
-For exploration or testing, adapt the contract instead of forcing implementation fields that add no value.
-
-## Choose Luna reasoning effort
-
-Choose effort per bounded task instead of using `max` by default.
-
-- `medium`: default for repository exploration, targeted testing, clear local implementation, mechanical work, and straightforward changes.
-- `high`: use for difficult exploration, non-trivial multi-file implementation, focused debugging, compatibility work, or complex failure reproduction.
-- `max`: reserve for genuinely difficult bounded implementation or diagnosis with subtle correctness constraints, or a sound task that already failed at `high`.
-
-Use `low` only when the user explicitly prioritizes speed/cost and the work is highly mechanical.
-
-Do not increase reasoning effort to compensate for ambiguity. Clarify, split, or replan instead.
-
-When the spawn interface supports a per-agent reasoning override, use it. Otherwise use the role profile default.
-
-## Context discipline
-
-Prefer fresh Luna workers for new bounded tasks.
-
-When supported, inherit minimal conversation history (`fork_turns = none` or only the few turns actually needed) and place required context in the delegated contract.
-
-Reuse the same worker only for a narrow correction or continuation where its local context remains directly useful.
-
-## Review and continue
-
-After delegated work returns, inspect the actual repository state and relevant evidence.
-
-Check:
-- scope;
-- objective and invariants;
-- implementation quality when code changed;
-- verification evidence;
-- whether the worker stayed within its role.
-
-Choose one next action:
-
-### ACCEPT
-Accept when the result and specification are sound.
-
-### CORRECT
-Use a focused correction when the specification is sound but the implementation or verification has a narrow defect. Reuse the same worker when practical.
-
-### REPLAN
-Reassess when the specification, architecture assumption, dependency, user requirement, or implementation direction is no longer sound. Use fresh workers for the new direction.
-
-Treat repeated correction of the same conceptual problem as evidence that replanning may be required.
-
-## Follow current reality
-
-Treat plans as provisional.
-
-Use the user's latest intent and actual current project state as authoritative.
-
-Do not continue obsolete work only because it appeared in an earlier plan. Do not automatically revert accepted work when requirements change.
-
-Preserve unrelated existing working-tree changes. Do not use destructive cleanup or history-altering Git operations merely to create a clean baseline.
-
-## Keep the workflow lightweight
-
-Default to serial delegation.
-
-Parallelize only clearly independent bounded tasks when it materially improves the work. Do not send multiple write-capable workers into overlapping code without explicit coordination.
-
-Do not add extra planner agents, reviewer agents, role fleets, persistent task databases, Git workflow machinery, or a separate routing framework unless real repeated failures justify them.
-
-Do not ask Luna roles to spawn further agents.
-
-Default loop:
-
-**Understand → Offload facts/work/evidence as useful → Decide → ACCEPT / CORRECT / REPLAN**
+Use Codex-native skills, role TOML files, spawn controls, and sandboxing. No mandatory custom runtime, reviewer fleet, task database, installer, or scheduler. Sol keeps decisions; Luna does bounded engineering.

@@ -1,7 +1,7 @@
 interface:
   display_name: "Codex Conductor"
-  short_description: "Astra/Sol directs; Luna explores, executes, and tests"
-  default_prompt: "Use $codex-conductor with the current GPT-6 Astra or GPT-5.6 Sol root session to direct this task and offload bounded exploration, implementation, and verification work to GPT-5.6 Luna."
+  short_description: "GPT-6 Sol directs; GPT-6 Luna explores, implements, and tests"
+  default_prompt: "Use $codex-conductor with my selected GPT-6 Sol root session as director. Offload coherent repository investigation, implementation, and focused verification to GPT-6 Luna roles when useful. Verify effective model routing and keep final acceptance in Sol."
 
 policy:
   allow_implicit_invocation: false
