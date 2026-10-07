@@ -13,7 +13,7 @@ This document distinguishes:
 
 - **UPSTREAM VERIFIED** — confirmed in current OpenAI documentation and/or current `openai/codex` protocol/schema.
 - **COMMUNITY CORROBORATED** — implemented successfully by an external Codex project, but still requires our own smoke validation.
-- **LOCAL SMOKE REQUIRED** — must be tested against the user's actual Codex installation/account/Windows environment before architecture freeze.
+- **LOCAL SMOKE REQUIRED** — must be tested against real Codex installations/accounts on the Tier-1 Windows CLI and Linux CLI host profiles before release qualification; architecture freeze and host qualification are tracked separately.
 - **NOT A CORE DEPENDENCY** — useful capability, but v3 correctness must not depend on it.
 
 ## 2. Current baseline
@@ -417,11 +417,11 @@ Repeat with another allowed strong model to prove configurability.
 
 ### LS-3 — worker binding
 
-Start a worker thread explicitly on Luna.
+Start a worker thread explicitly on the selected task-bound worker model.
 
 Verify:
 
-- response model is Luna;
+- response model exactly matches the selected worker binding;
 - actual inference succeeds;
 - repository command/file tools work under the intended permissions;
 - native subagent spawning is disabled for the managed worker;
