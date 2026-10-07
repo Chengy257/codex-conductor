@@ -21,7 +21,12 @@ R0 may first implement this as `tools/r0_smoke.py`; R1 may absorb stable probes 
 
 ## 2. Isolation and safety
 
-All live probes use a disposable Git repository under `%TEMP%\codex-conductor-r0-<run-id>`.
+All live probes use a disposable Git repository under the platform temp directory, for example:
+
+```
+Windows: %TEMP%\codex-conductor-r0-<run-id>\
+Linux:  $TMPDIR/codex-conductor-r0-<run-id>/  (fallback /tmp)
+```
 
 Never mutate a real project, persistent Codex config, existing user thread, account/workspace settings, reset credits, or permissions beyond the probe.
 
@@ -52,7 +57,7 @@ For explicit `solo/audit`, a separately authorized root execution context may ha
 
 ### LS-1 — Environment/protocol
 
-Record global Codex version, pinned `openai-codex` SDK version, SDK-managed runtime version, Windows version/arch, non-secret auth surface, app-server initialize, `model/list`, plugin discovery, and required method/notification availability.
+Record global Codex version, pinned `openai-codex` SDK version, SDK-managed runtime version, OS family/version/arch, execution surface (Windows CLI / Linux CLI / WSL2-compatible Linux), non-secret auth surface, app-server initialize, `model/list`, plugin discovery, and required method/notification availability.
 
 Required methods include `thread/start`, `thread/resume`, `thread/settings/update`, `turn/start`, Goal set/get/clear, `account/rateLimits/read`, and `model/list`.
 
@@ -108,15 +113,23 @@ Call `account/rateLimits/read` and record only redacted shape/evidence: limit id
 
 Do not intentionally exhaust quota or consume reset credits.
 
-### LS-8 — Windows scheduler wake
+### LS-8 — Tier-1 scheduler wake
 
-Create a temporary one-shot user scheduled task whose callback loads persisted smoke state and atomically writes a `wake.json` marker without inference.
+Run a platform-specific one-shot scheduler probe. The callback loads persisted smoke state and atomically writes a `wake.json` marker without inference.
 
-Require creation without admin escalation, callback execution, matching state/run identity, successful exit, and cleanup.
+**Windows CLI**
 
-Initial guarantee: wake works when the user session is available even if Codex, terminal, and app-server are closed.
+Use Windows Task Scheduler under the normal user context. Require creation without admin escalation, callback execution, matching state/run identity, successful exit, and cleanup.
 
-After reboot, durable state survives and overdue tasks are recovered by a logon/startup catch-up scan. Do not claim pre-logon execution without separately validating an authorized Windows credential/service configuration.
+Initial Windows guarantee: wake works when the user session is available even if Codex, terminal, and app-server are closed. After reboot, durable state survives and overdue tasks are recovered by a logon/startup catch-up scan. Do not claim pre-logon execution without separately validating an authorized Windows credential/service configuration.
+
+**Linux CLI**
+
+Use a transient/temporary `systemd --user` service + timer when the user systemd manager is available. Require timer creation, callback execution, matching state/run identity, successful exit, and cleanup.
+
+Initial Linux guarantee: wake works without an interactive Codex shell while the user systemd manager is running. For headless hosts, `loginctl enable-linger` may extend this across logout/reboot, but the smoke harness must only detect/report linger state; it must not silently enable it.
+
+If `systemd --user` is unavailable (for example a minimal container or some WSL environments), run the portable foreground `codex-conductor supervise` probe and report `scheduler_mode=foreground_fallback`. This validates continuity logic but does not count as full unattended scheduler PASS.
 
 ## 5. Deferred LS-9 — real quota-window acceptance
 
@@ -167,6 +180,34 @@ LS-1 through LS-8 are local integration tests. CI success must never be presente
 
 ## 9. R0 freeze gate
 
-Freeze R0 when upstream review remains PASS, this harness design is frozen, and LS-1 through LS-8 pass on the target Windows environment (or a non-core item has an explicit fallback).
+Freeze the R0 **architecture/design** when upstream review remains PASS and this dual-platform harness design is frozen.
 
-LS-9 remains the R5 release gate. Then produce one consolidated R1–R5 implementation specification.
+Track host qualification independently:
+
+- Windows CLI: LS-1 through LS-8;
+- Linux CLI: LS-1 through LS-8.
+
+Both Tier-1 host matrices must pass before v3 release qualification (or a non-core item has an explicit documented fallback).
+
+LS-9 remains the R5 release gate. Exercise at least one real quota boundary during R5, then verify wake/resume behavior on both Tier-1 scheduler backends before release.
+
+
+## 10. Tier-1 platform matrix
+
+The smoke harness is one logical suite with two Tier-1 host profiles, not separate Windows and Linux products.
+
+| Capability | Windows CLI | Linux CLI |
+|---|---|---|
+| SDK/app-server thread lifecycle | required | required |
+| exact root/worker model binding | required | required |
+| root read-only / worker write boundary | required | required |
+| native subagent bypass disabled | required | required |
+| Goal lifecycle | required | required |
+| quota read/classification | required | required |
+| process restart + thread resume | required | required |
+| durable task state | required | required |
+| unattended wake backend | Task Scheduler | systemd --user |
+| portable fallback | supervise | supervise |
+| graphical Codex app required | no | no |
+
+WSL2 is tested as a Linux execution surface. If `systemd --user` is enabled, use the Linux scheduler path; otherwise report the foreground fallback instead of silently crossing into Windows Task Scheduler unless a future explicit WSL bridge is designed.
