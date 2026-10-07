@@ -49,7 +49,8 @@ Do not hard-code protocol behavior from an alpha build.
 | Official `openai-codex` Python SDK | UPSTREAM VERIFIED | primary controller adapter; stable SDK pins matching runtime |
 | Persistent app-server community orchestration | COMMUNITY CORROBORATED | useful R2 reference |
 | Quota auto-resume via app-server/CLI | COMMUNITY CORROBORATED | useful R5 reference |
-| Windows Task Scheduler wake | COMMUNITY CORROBORATED | first scheduler backend; local smoke required |
+| Windows Task Scheduler wake | COMMUNITY CORROBORATED | Tier-1 Windows backend; local smoke required |
+| Linux systemd --user wake | COMMUNITY CORROBORATED | Tier-1 Linux backend; local smoke required |
 
 ## 4. SDK and app-server findings
 
@@ -386,14 +387,15 @@ Update `CODEX_CONDUCTOR_V3_RUNTIME_REBASELINE_PLAN.md` to:
 
 These cannot be closed by repository/document inspection alone.
 
-Run against the user's real Windows environment before freezing R0. The detailed executable contract is in `CODEX_CONDUCTOR_V3_R0_SMOKE_HARNESS_SPEC.md`:
+Run against both Tier-1 target environments before release qualification: Windows Codex CLI and Linux Codex CLI. R0 architecture may freeze before both hosts are physically available, but host validation remains open until each Tier-1 matrix passes. The detailed executable contract is in `CODEX_CONDUCTOR_V3_R0_SMOKE_HARNESS_SPEC.md`:
 
 ### LS-1 — environment
 
 Record:
 
 - `codex --version`;
-- Windows version;
+- OS family/version/architecture;
+- execution surface: Windows CLI, Linux CLI, or compatible Linux runtime such as WSL2;
 - current authentication surface/account plan;
 - available models from `model/list`;
 - installed/pinned `openai-codex` SDK and matching runtime version.
@@ -463,14 +465,23 @@ Do not require a real exhaustion event for this smoke.
 
 ### LS-8 — scheduler wake
 
-Create a harmless local task scheduled a few minutes ahead through Windows Task Scheduler.
+Run the scheduler probe for the active Tier-1 platform.
 
-Verify it can:
+**Windows CLI**
 
-- launch `codex-conductor resume <test-task>`;
-- start/reconnect app-server;
+Create a harmless one-shot user task through Windows Task Scheduler.
+
+**Linux CLI**
+
+Create a harmless one-shot `systemd --user` service/timer. Verify the user manager can invoke Conductor without an interactive Codex shell. If systemd user services are unavailable, exercise the portable `codex-conductor supervise` fallback and report scheduler capability as reduced rather than pretending full unattended wake support.
+
+For either Tier-1 backend verify it can:
+
+- launch `codex-conductor resume <test-task>` or the smoke callback;
+- start/reconnect the SDK/app-server runtime;
 - locate persisted state;
-- exit cleanly.
+- exit cleanly;
+- remove/disable temporary scheduler artifacts.
 
 ### LS-9 — real quota boundary acceptance test
 
@@ -500,4 +511,30 @@ The most important corrections discovered during R0 are:
 2. Goals are more automatable than assumed and should be integrated earlier;
 3. quota state is structured enough for a safe scheduler, but native cross-window auto-resume is still not a reliable host guarantee.
 
-R1 implementation must not begin until the R0 smoke-harness contract is frozen and LS-1 through LS-8 are either passed on the target Windows environment or explicitly marked deferred with a non-core fallback path. LS-9 remains the R5 acceptance gate.
+R1 implementation may begin after the R0 architecture and smoke-harness contract are frozen. Tier-1 host validation remains tracked separately: LS-1 through LS-8 must pass on both Windows CLI and Linux CLI before v3 release qualification, or a specific non-core probe must have an explicit documented fallback. LS-9 remains the R5 acceptance gate on at least one real quota boundary and should subsequently be exercised on both Tier-1 scheduler backends.
+
+
+## 14. Platform correction
+
+R0 originally over-emphasized Windows because the user's connected workstation and scheduler discussion were Windows-based. That is not the product scope.
+
+v3 is CLI/runtime-first. Windows Codex CLI and Linux Codex CLI are equal Tier-1 execution targets. The Codex Desktop/App is an optional plugin bridge only.
+
+Common logic must be identical across both Tier-1 targets:
+
+- model-profile resolution and task-frozen exact bindings;
+- SDK/app-server thread/turn lifecycle;
+- root read-only / worker write boundaries;
+- repository guards and validation freshness;
+- Goal integration;
+- quota classification and task state;
+- role-aware resume.
+
+Platform-specific code is limited primarily to:
+
+- path/user-data conventions;
+- process lifecycle details;
+- scheduler/wake adapter;
+- OS capability diagnostics.
+
+Linux scheduler baseline is `systemd --user`; Windows baseline is Task Scheduler. Neither platform is considered a fallback for the other.
