@@ -136,34 +136,72 @@ Reasons:
 
 Therefore the default v3 worker model is an independently launched Codex worker thread/process explicitly pinned to Luna. Native subagents can later be enabled for bounded parallel read-only work after runtime validation.
 
-## 5. Model topology
+## 5. Model topology and task-frozen model binding
 
-Default:
+The architecture is role-based rather than permanently tied to one model generation.
+
+Typical current choices are:
 
 ```
 Root / Director
-  GPT-5.6 Sol
-  medium/high
+  selectable strong model, e.g. gpt-6.1-sol or gpt-6-astra
+  selected reasoning effort
   architecture + plan + routing + review + acceptance
 
 Explorer
-  GPT-5.6 Luna
-  medium
+  selectable economical task model, typically gpt-6-luna
   read-only repository investigation
 
 Worker
-  GPT-5.6 Luna
-  high/max as supported
+  selectable economical task model, typically gpt-6-luna
   bounded implementation + focused verification
 
 Optional Reviewer
-  GPT-5.6 Sol or fresh strong-model context
+  defaults to the task's root binding or another explicitly configured strong-review binding
   only for high-assurance tasks
 ```
 
-Every worker launch must carry an explicit model ID. Missing or unavailable worker-model selection is a launch failure.
+### 5.1 Model profiles are defaults, not active-task identities
 
-No silent fallback from Luna to Sol is allowed.
+User/global configuration may define future-proof profiles such as `strong` and `worker` with preferred model lists. This lets new model generations replace today's defaults without redesigning the runtime.
+
+At task creation, profiles are resolved to exact model IDs and reasoning efforts. The exact resolved values are persisted in task state.
+
+### 5.2 Task binding invariant
+
+Once a task becomes active, its model binding is frozen:
+
+- root model/effort/provider are fixed;
+- worker model/effort/provider are fixed;
+- configuration changes affect new tasks only;
+- auto-resume uses the stored exact binding and never re-resolves a symbolic profile;
+- the root model may not choose a different worker model during execution;
+- a worker may not select or spawn itself under another model.
+
+Every root/worker `thread/start` and `thread/resume` must use and verify the stored binding.
+
+App-server's `allowProviderModelFallback` must remain false. Missing/unavailable model access is a launch or resume blocker, never a reason to inherit/fallback silently.
+
+### 5.3 Drift and reroute detection
+
+App-server permits model changes through thread settings and resume overrides, and can emit `model/rerouted` for platform-managed rerouting.
+
+The controller must therefore:
+
+- observe the effective model returned by start/resume;
+- observe `thread/settings/updated`;
+- observe `model/rerouted`;
+- reject task progression when the effective model no longer matches the binding.
+
+A non-matching worker result is not valid acceptance evidence.
+
+### 5.4 Explicit migration only
+
+If a pinned model is retired or becomes unavailable, the task transitions to `waiting_user`.
+
+No model-facing tool may mutate the binding.
+
+A future user-only `task rebind-model` operation may be added, but it must run only with no active turn/worker, increment a binding generation, journal the decision, and invalidate stale validation/review. Initial v3 may simply require a new task.
 
 ## 6. Routing model
 
@@ -228,7 +266,11 @@ Minimal state:
   "status": "...",
   "root_thread_id": "...",
   "active_worker": null,
-  "worker_model": "gpt-5.6-luna",
+  "model_binding": {
+    "generation": 1,
+    "root": {"model": "gpt-6.1-sol", "reasoning_effort": "high", "provider": "..."},
+    "worker": {"model": "gpt-6-luna", "reasoning_effort": "high", "provider": "..."}
+  },
   "phase": "...",
   "validation": {},
   "review": {},
@@ -444,18 +486,20 @@ Before every automatic resumed write phase verify:
 
 If any check fails, stop at `waiting_user` or `blocked`.
 
-## 14. Goals integration
+## 14. Native Goals integration
 
 Codex Goals are useful but are not the v3 scheduler.
 
-Goals may be used as an optional persistent objective inside the root thread. However, native Codex currently lacks a reliable general automatic quota-window resume path, and Goal lifecycle controls are not uniformly exposed across all noninteractive surfaces.
+R0 confirms that current app-server exposes noninteractive `thread/goal/set`, `thread/goal/get`, and `thread/goal/clear`, with goal states including `active`, `paused`, `blocked`, `usageLimited`, `budgetLimited`, and `complete`.
 
-Therefore:
+Therefore native Goal integration moves earlier into the root-session runtime:
 
-- controller state is authoritative for continuity;
-- native Goal state may be mirrored as auxiliary metadata;
-- automatic cross-window resume must not require UI-only `/goal resume`;
-- app-server protocol support for goal control may be adopted later once stable and fully exposed.
+- the root thread may use a native Goal as its persistent objective;
+- Conductor may read/update Goal state through app-server;
+- `usageLimited` can be mapped into the Conductor quota-continuity path;
+- Goal state remains thread-local semantic state, not the authoritative cross-process scheduler;
+- controller state remains authoritative for model binding, repository guards, quota wake scheduling, validation, and acceptance;
+- automatic cross-window resume remains external/local because Codex still does not provide a reliable general host guarantee for unattended quota-window wake.
 
 ## 15. App-server controller
 
@@ -498,8 +542,8 @@ Phase 1 should favor independent bounded worker launches rather than deep native
 
 Preferred order:
 
-1. app-server worker thread pinned to Luna if model selection is supported reliably on thread start;
-2. otherwise `codex exec --model gpt-5.6-luna` bounded worker;
+1. app-server worker thread pinned to the task's exact worker-model binding;
+2. otherwise `codex exec --model <pinned-worker-model>` bounded worker;
 3. native named subagent only as an optional optimization.
 
 This makes model routing observable and deterministic.
@@ -619,7 +663,7 @@ No multi-agent implementation yet.
 Deliver:
 
 - managed app-server adapter;
-- Sol root thread start/resume;
+- root thread start/resume with exact task-frozen model binding;
 - turn lifecycle;
 - structured event/error normalization;
 - thread persistence;
@@ -631,9 +675,12 @@ Exit gate: a root task survives app-server/controller restart.
 
 Deliver:
 
-- worker-model preflight;
-- Luna explorer;
-- Luna implementation worker;
+- root/worker model-profile resolution and entitlement smoke;
+- task-frozen root/worker binding;
+- provider fallback disabled;
+- model drift/reroute detection;
+- economical-model explorer;
+- economical-model implementation worker;
 - bounded contracts;
 - one-writer guard;
 - ownership checks;
@@ -674,7 +721,7 @@ Exit gate: real controlled test crosses one quota/reset boundary and automatical
 
 Evaluate only after R0–R5 are stable:
 
-- use Codex native Goal as optional root objective;
+- deeper use of native Goal lifecycle after the R2/R3 baseline integration;
 - native subagents for read-only parallel exploration;
 - SubagentStart/Stop telemetry;
 - plugin MCP tools for controller inspection/control;
@@ -723,8 +770,8 @@ Adopt mechanisms only after they are compatible with current upstream Codex.
 
 A v3 release is successful when all of the following are demonstrated on real Codex:
 
-1. Sol remains the planning/review authority.
-2. A bounded implementation can be forced through Luna by controller policy.
+1. The task-selected strong root model remains the planning/review authority.
+2. A bounded implementation can be forced through the task-selected economical worker model by controller policy.
 3. The controller survives process restart.
 4. A root thread resumes through app-server using its persisted thread ID.
 5. Repository state, not model claims, determines completion evidence.
@@ -740,7 +787,9 @@ Do not implement R1 yet.
 
 First execute R0 as an independent capability-validation round against the currently installed/latest Codex build, especially:
 
-- app-server model selection per thread;
+- app-server model selection per thread and exact-model verification;
+- task-frozen root/worker binding across thread start/resume;
+- model-drift and model-reroute observation;
 - thread/resume behavior;
 - usage/rate-limit events and `resetsAt`;
 - behavior after app-server restart;
