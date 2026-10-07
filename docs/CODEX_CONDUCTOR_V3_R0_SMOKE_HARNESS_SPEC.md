@@ -52,17 +52,19 @@ For explicit `solo/audit`, a separately authorized root execution context may ha
 
 ### LS-1 — Environment/protocol
 
-Record Codex version, SDK/runtime version, Windows version/arch, non-secret auth surface, app-server initialize, `model/list`, and required method/notification availability.
+Record global Codex version, pinned `openai-codex` SDK version, SDK-managed runtime version, Windows version/arch, non-secret auth surface, app-server initialize, `model/list`, plugin discovery, and required method/notification availability.
 
 Required methods include `thread/start`, `thread/resume`, `thread/settings/update`, `turn/start`, Goal set/get/clear, `account/rateLimits/read`, and `model/list`.
 
 Required notifications include settings updates, turn completion, Goal updates, rate-limit updates, and `model/rerouted`.
 
+Plugin packaging check: validate the required `.codex-plugin/plugin.json` layout through the current Codex plugin tooling. Do not add a root-level `plugin.json`; current Codex plugin scaffolding treats `.codex-plugin/plugin.json` as the required manifest. Hook discovery is recorded separately because hooks are not a correctness dependency.
+
 ### LS-2 — Root binding
 
 Start a disposable root thread with the requested strong model.
 
-Require exact effective model/provider/effort, provider fallback off, native multi-agent disabled, read-only policy active, minimal inference success, and rejection of a controlled write attempt.
+Require exact effective model/provider/effort, provider fallback off, native multi-agent disabled, read-only policy active, minimal inference success, and rejection of a controlled write attempt. Establish/verify the pinned reasoning effort before the first task turn rather than assuming a global config value was honored.
 
 An optional alternate root model may be tested to prove configurability.
 
@@ -70,7 +72,7 @@ An optional alternate root model may be tested to prove configurability.
 
 Start a disposable worker thread with the requested worker model.
 
-Require exact model/provider/effort, fallback off, native multi-agent disabled, workspace-write active, one bounded file edit, one focused verification command, and changed paths confined to smoke ownership.
+Require exact model/provider/effort, fallback off, native multi-agent disabled, workspace-write active, one bounded file edit, one focused verification command, and changed paths confined to smoke ownership. Establish/verify the pinned reasoning effort before the first worker task turn.
 
 ### LS-4 — Drift/reroute
 
@@ -90,7 +92,7 @@ start managed SDK/app-server runtime
 → thread/resume(threadId, pinned binding)
 ```
 
-Require same thread, exact binding, acceptable permissions, Goal readback, and no silent fallback/reroute.
+Require same thread, exact model/provider/effort binding after resume, acceptable permissions, Goal readback, and no silent fallback/reroute. Re-apply/verify pinned reasoning effort before continuation if the resume helper does not carry it directly.
 
 ### LS-6 — Native Goal control
 
