@@ -1,0 +1,751 @@
+# Codex Conductor v3 Runtime Rebaseline Plan
+
+Status: working architecture plan  
+Date: 2026-10-07  
+Target: `Chengy257/codex-conductor`  
+Branch: `docs/v3-runtime-rebaseline-20261007`
+
+## 1. Rebaseline decision
+
+Codex Conductor v3 is not a larger skill package.
+
+It is a Codex-native orchestration product composed of:
+
+1. a portable Codex plugin for installation, commands, hooks, small model-visible skills, and optional MCP tool exposure;
+2. a local deterministic controller/runtime that owns durable task state, model routing, worker dispatch, validation bookkeeping, quota continuity, and recovery;
+3. Codex itself as the execution substrate, primarily through `codex app-server` persistent threads, with `codex exec` as a bounded one-shot/fallback execution path.
+
+The strong root model remains responsible for semantic work: architecture, ambiguity resolution, task decomposition, routing decisions, change control, review, and final acceptance. Cheap workers perform bounded exploration and implementation.
+
+The v3 design must not depend on the root model voluntarily remembering to spawn workers. Delegation and continuation become controller actions.
+
+## 2. Relationship to glm-conductor
+
+`glm-conductor` is a design reference only. ZCode-specific Native Workflow, Scheduled Task, plugin hooks, and workflow execution APIs are not portable to Codex and must not be copied as implementation assumptions.
+
+The transferable principles are:
+
+- strong-model reasoning is spent on planning and acceptance;
+- bounded implementation is delegated to a cheaper model;
+- model choice is explicit and fails closed instead of silently inheriting the root model;
+- task state persists across session/process restarts;
+- validation and final acceptance are bound to the actual repository state;
+- automatic quota continuation is opt-in, bounded, observable, and safe;
+- the conductor does not model facts already owned reliably by the host.
+
+For Codex, the host/runtime boundary is different. Codex app-server owns thread/turn execution and native session state; Codex Conductor owns cross-turn task semantics and orchestration state that Codex does not yet guarantee.
+
+## 3. Product shape
+
+### 3.1 Plugin layer
+
+Recommended layout:
+
+```
+codex-conductor/
+├─ plugin.json
+├─ .codex-plugin/
+│  └─ plugin.json
+├─ skills/
+│  └─ conductor/
+│     └─ SKILL.md
+├─ hooks/
+│  ├─ hooks.json
+│  ├─ session_start.py
+│  ├─ subagent_start.py
+│  ├─ subagent_stop.py
+│  ├─ stop.py
+│  └─ session_end.py
+├─ runtime/
+│  └─ codex_conductor/
+├─ cli/
+├─ profiles/
+├─ docs/
+└─ tests/
+```
+
+The plugin is the installable shell. It should not contain the orchestration logic in prose.
+
+### 3.2 Runtime/controller layer
+
+The runtime is a local Python package and CLI, initially invoked as:
+
+```
+codex-conductor ...
+```
+
+It owns:
+
+- task creation and durable state;
+- repository binding;
+- root/worker model policy;
+- task contracts and work-unit graph;
+- app-server process lifecycle;
+- Codex thread IDs and turn IDs;
+- worker dispatch;
+- worker result normalization;
+- deterministic repository checks;
+- change freshness;
+- quota observation and waiting;
+- scheduled wake/resume;
+- retry budgets;
+- final handoff to the root/reviewer;
+- diagnostics and recovery.
+
+It must remain smaller than a general-purpose workflow engine.
+
+## 4. Codex-native execution substrate
+
+### 4.1 Primary: persistent `codex app-server`
+
+Use app-server as the primary runtime for meaningful work because it exposes persistent Codex threads and can resume them after process restart.
+
+The controller should:
+
+1. start or attach to one managed app-server process;
+2. initialize the protocol;
+3. create a root thread with the selected strong model;
+4. persist the returned `thread.id`;
+5. start turns through `turn/start`;
+6. consume lifecycle/usage/error events;
+7. use `thread/resume` when reconnecting after controller or app-server restart.
+
+The app-server is the preferred basis for long-running sessions and quota recovery.
+
+### 4.2 Secondary: `codex exec`
+
+Use `codex exec` for:
+
+- short bounded workers;
+- disposable explorer tasks;
+- compatibility fallback when an app-server operation cannot be expressed reliably;
+- emergency recovery paths.
+
+Do not make `codex exec` the authoritative long-lived task store.
+
+### 4.3 Native Codex subagents
+
+Native subagents remain available as an optimization, but v3 must not rely on them for the core guarantee that implementation uses Luna.
+
+Reasons:
+
+- root-triggered spawning remains partly model-driven;
+- resumed roots may not reliably recover historical child agent state across versions;
+- multi-agent behavior can consume quota unexpectedly;
+- nested agent trees are harder to bound than explicit controller dispatch.
+
+Therefore the default v3 worker model is an independently launched Codex worker thread/process explicitly pinned to Luna. Native subagents can later be enabled for bounded parallel read-only work after runtime validation.
+
+## 5. Model topology
+
+Default:
+
+```
+Root / Director
+  GPT-5.6 Sol
+  medium/high
+  architecture + plan + routing + review + acceptance
+
+Explorer
+  GPT-5.6 Luna
+  medium
+  read-only repository investigation
+
+Worker
+  GPT-5.6 Luna
+  high/max as supported
+  bounded implementation + focused verification
+
+Optional Reviewer
+  GPT-5.6 Sol or fresh strong-model context
+  only for high-assurance tasks
+```
+
+Every worker launch must carry an explicit model ID. Missing or unavailable worker-model selection is a launch failure.
+
+No silent fallback from Luna to Sol is allowed.
+
+## 6. Routing model
+
+Retain a simple four-mode routing model:
+
+| Delegability | Assurance | Route | Implementation | Independent review |
+|---|---|---|---|---|
+| low | standard | solo | root | no |
+| high | standard | delegate | Luna worker | no |
+| low | high | audit | root | yes |
+| high | high | full | Luna worker | yes |
+
+A non-trivial bounded implementation defaults to `delegate`.
+
+The controller, not the skill, should enforce the selected route.
+
+The root may still revise a route when new evidence appears, but the revision must be written into task state before execution changes.
+
+## 7. Task contract
+
+A delegated unit must contain at least:
+
+```yaml
+id:
+objective:
+repository:
+depends_on:
+ownership:
+interfaces:
+constraints:
+verification:
+```
+
+The runtime should validate:
+
+- graph validity;
+- dependency cycles;
+- missing references;
+- invalid/ambiguous ownership patterns;
+- unsafe concurrent write overlaps.
+
+The first v3 release should default to one active write worker per repository. Parallelism is permitted for read-only exploration. Parallel write support can be added only after ownership conflict handling is proven.
+
+## 8. Durable task state
+
+Store runtime state outside normal source files, preferably under:
+
+```
+<repo>/.codex-conductor/
+```
+
+and add it to local Git exclusion.
+
+Minimal state:
+
+```json
+{
+  "task_id": "...",
+  "goal": "...",
+  "repository": "...",
+  "route": "...",
+  "status": "...",
+  "root_thread_id": "...",
+  "active_worker": null,
+  "worker_model": "gpt-5.6-luna",
+  "phase": "...",
+  "validation": {},
+  "review": {},
+  "quota": {},
+  "continuity": {}
+}
+```
+
+Recommended statuses:
+
+- active
+- waiting_quota
+- waiting_user
+- blocked
+- validating
+- reviewing
+- completed
+- cancelled
+- failed
+
+Do not mirror every Codex turn event into durable task state. Persist only facts required for orchestration and recovery.
+
+## 9. Root/worker protocol
+
+The root produces a structured implementation contract. The controller validates and dispatches it.
+
+Worker return contract:
+
+```json
+{
+  "status": "complete|partial|blocked",
+  "changed_files": [],
+  "verification": [],
+  "risks": [],
+  "replan_required": false,
+  "summary": "..."
+}
+```
+
+Worker claims are never sufficient for acceptance.
+
+After the worker finishes, the controller collects the real repository diff and verification evidence and presents them to the root.
+
+Root outcome:
+
+- ACCEPT
+- CORRECT
+- REPLAN
+- WAIT_USER
+
+## 10. Repository safety and freshness
+
+Port the useful deterministic ideas, but reimplement them for Codex.
+
+### 10.1 Writer guard
+
+Default invariant:
+
+> At most one active Codex Conductor write execution per repository.
+
+The guard must be process-safe and survive controller crashes. It must never expire merely because time passed. Recovery requires inspection and explicit force release or proof that the owning task is terminal.
+
+### 10.2 Ownership guard
+
+Before acceptance:
+
+```
+actual changed paths ⊆ declared task ownership
+```
+
+Violations block completion.
+
+### 10.3 Change freshness
+
+Compute a deterministic `change_id` from:
+
+- base revision;
+- relevant changed paths;
+- file contents/state.
+
+Validation and review records bind to `change_id`.
+
+Any subsequent relevant repository modification invalidates stale validation/review.
+
+## 11. Codex hooks
+
+Hooks are supporting instrumentation, not the primary scheduler.
+
+Use plugin-bundled hooks for:
+
+- `SessionStart`: load task identity/recovery context;
+- `SubagentStart` / `SubagentStop`: observe native subagent use when enabled;
+- `Stop`: refuse/flag premature task completion when controller invariants fail;
+- `SessionEnd`: checkpoint metadata;
+- optionally `PostToolUse`: lightweight diagnostics only.
+
+Do not implement orchestration loops inside hooks.
+
+Hooks must degrade visibly if untrusted or unavailable; the controller remains authoritative.
+
+## 12. Skills
+
+Keep one small conductor skill for user/model-facing semantics:
+
+- explain root responsibilities;
+- describe the route modes;
+- tell the root how to emit a task contract;
+- explain acceptance outcomes.
+
+The skill must not pretend to enforce model routing, worker launch, quota resume, or repository locks.
+
+Target: approximately 30–60 lines, not a runtime specification.
+
+## 13. Quota-aware execution
+
+This is a first-class v3 capability.
+
+### 13.1 Inputs
+
+The runtime should consume structured Codex/app-server usage information when available, including:
+
+- rate-limit bucket;
+- used/remaining percentage;
+- `resetsAt`;
+- ordinary usage allowed;
+- rate-limit reached type;
+- credits/spend-control status.
+
+Do not infer recovery only from elapsed time or percentages when the backend provides an explicit availability flag.
+
+### 13.2 Quota failure classification
+
+Separate:
+
+- usage limit reached;
+- workspace/account credit exhaustion;
+- transient provider error;
+- concurrency/subagent limit;
+- network failure;
+- permission/approval block.
+
+Only true temporary usage-window exhaustion enters `waiting_quota`.
+
+### 13.3 Automatic wake design
+
+Automatic continuation must be opt-in per task.
+
+When a task hits a temporary usage limit:
+
+1. checkpoint controller task state;
+2. record Codex root thread ID and the interrupted phase;
+3. capture the server-provided reset timestamp when available;
+4. transition to `waiting_quota`;
+5. release resources that should not remain live while waiting;
+6. create a local wake record;
+7. sleep without model calls;
+8. at/after the reset time, query account/rate-limit state again;
+9. only resume when ordinary usage is confirmed available;
+10. reconnect/start app-server if needed;
+11. `thread/resume` the persisted root thread;
+12. start a continuation turn carrying a compact controller checkpoint;
+13. revalidate repository state and permissions before writes;
+14. continue until task completion, user input, a non-quota blocker, or the configured resume budget is exhausted.
+
+### 13.4 Wake scheduler
+
+Do not depend on the Codex process remaining alive.
+
+Implement a small local supervisor/scheduler.
+
+Cross-platform target:
+
+- Windows: Task Scheduler backend;
+- Linux: systemd user timer or durable supervisor;
+- macOS: launchd;
+- portable fallback: foreground `codex-conductor supervise`.
+
+The runtime should expose a common scheduler adapter rather than embedding OS-specific behavior in task logic.
+
+### 13.5 Bounded continuity
+
+State:
+
+```json
+{
+  "mode": "manual|auto",
+  "max_resumes": 3,
+  "resume_count": 0,
+  "wake_at": null,
+  "scheduler_ref": null
+}
+```
+
+Rules:
+
+- auto resume must be explicitly enabled;
+- each successful quota-window continuation consumes a resume budget unit;
+- when the budget is exhausted, transition to `waiting_user`;
+- repeated quota errors immediately after wake use bounded backoff and fresh rate-limit checks;
+- never spin/busy-wait with model calls.
+
+### 13.6 Resume safety gate
+
+Before every automatic resumed write phase verify:
+
+- repository identity still matches;
+- branch/base assumptions remain valid;
+- no conflicting external changes invalidate the task contract;
+- writer guard is acquirable;
+- effective approval/sandbox profile is acceptable;
+- worker model is still available;
+- usage is actually available.
+
+If any check fails, stop at `waiting_user` or `blocked`.
+
+## 14. Goals integration
+
+Codex Goals are useful but are not the v3 scheduler.
+
+Goals may be used as an optional persistent objective inside the root thread. However, native Codex currently lacks a reliable general automatic quota-window resume path, and Goal lifecycle controls are not uniformly exposed across all noninteractive surfaces.
+
+Therefore:
+
+- controller state is authoritative for continuity;
+- native Goal state may be mirrored as auxiliary metadata;
+- automatic cross-window resume must not require UI-only `/goal resume`;
+- app-server protocol support for goal control may be adopted later once stable and fully exposed.
+
+## 15. App-server controller
+
+Implement a thin protocol client with:
+
+- process start/stop/reconnect;
+- initialize handshake;
+- thread start/resume;
+- turn start;
+- event streaming;
+- terminal turn state detection;
+- rate-limit event extraction;
+- thread metadata persistence;
+- bounded reconnect;
+- cancellation.
+
+Do not expose raw JSON-RPC details to users.
+
+Initial architecture:
+
+```
+Codex Conductor CLI / Plugin
+          |
+          v
+Local Controller
+  |       |        |
+  |       |        +-- Scheduler / Wake
+  |       +----------- State + Guards
+  +------------------- App-server Adapter
+                           |
+                           v
+                    Codex app-server
+                      |           |
+                  Sol root     Luna workers
+```
+
+## 16. Worker execution strategy
+
+Phase 1 should favor independent bounded worker launches rather than deep native subagent trees.
+
+Preferred order:
+
+1. app-server worker thread pinned to Luna if model selection is supported reliably on thread start;
+2. otherwise `codex exec --model gpt-5.6-luna` bounded worker;
+3. native named subagent only as an optional optimization.
+
+This makes model routing observable and deterministic.
+
+## 17. Observability
+
+Provide:
+
+```
+codex-conductor status
+codex-conductor tasks
+codex-conductor inspect <task>
+codex-conductor logs <task>
+codex-conductor quota
+codex-conductor doctor
+```
+
+Record:
+
+- selected root/worker models;
+- Codex version;
+- app-server protocol version/capabilities;
+- root/worker thread IDs;
+- task transitions;
+- quota classification;
+- wake scheduling;
+- resume outcomes;
+- verification outcomes;
+- final acceptance.
+
+Do not build a full tracing platform in v3.
+
+## 18. Recovery
+
+Required recovery scenarios:
+
+- controller crash;
+- app-server crash;
+- terminal closed;
+- machine restart;
+- quota window crossed while Codex is not running;
+- stale writer guard;
+- root thread can resume but prior native subagents cannot;
+- worker failed after partial repository modification;
+- rate-limit payload unavailable;
+- approval/sandbox profile changed after resume.
+
+The runtime must be able to reconstruct the task from controller state plus real repository state without relying on a live child-agent tree.
+
+## 19. Security and permissions
+
+The runtime must respect Codex sandbox/approval behavior rather than bypassing it by default.
+
+Auto continuation may resume only within a previously authorized policy envelope.
+
+Do not silently escalate:
+
+- sandbox;
+- filesystem scope;
+- network permission;
+- command approval policy.
+
+A resumed task that requires stronger authority transitions to `waiting_user`.
+
+## 20. Migration from current codex-conductor
+
+Current assets:
+
+- existing skill;
+- named Luna TOML roles;
+- routing documentation;
+- smoke tests.
+
+Migration:
+
+- retain role text as source material;
+- shrink SKILL.md substantially;
+- keep named role profiles only where native custom agents remain useful;
+- remove claims that skill prose guarantees delegation;
+- move model selection, state, and validation into runtime code;
+- archive old validation document as v2 historical behavior;
+- no compatibility requirement for existing v2 orchestration semantics.
+
+This is a deliberate v3 breaking architecture change.
+
+## 21. Implementation phases
+
+### R0 — Capability validation and architecture freeze
+
+Deliver:
+
+- current Codex CLI/app-server capability matrix;
+- plugin/hook/custom-agent support matrix;
+- exact thread/model/usage/rate-limit protocol observations;
+- Windows auto-wake feasibility test;
+- final architecture document.
+
+Exit gate: no unverified host assumption remains in the main execution path.
+
+### R1 — Plugin skeleton + runtime foundation
+
+Deliver:
+
+- portable/compatibility plugin manifests;
+- CLI package;
+- config loading;
+- durable task state;
+- repository binding;
+- event journal;
+- doctor/status commands;
+- basic hooks.
+
+No multi-agent implementation yet.
+
+### R2 — App-server session runtime
+
+Deliver:
+
+- managed app-server adapter;
+- Sol root thread start/resume;
+- turn lifecycle;
+- structured event/error normalization;
+- thread persistence;
+- restart/reconnect tests.
+
+Exit gate: a root task survives app-server/controller restart.
+
+### R3 — Deterministic Luna delegation
+
+Deliver:
+
+- worker-model preflight;
+- Luna explorer;
+- Luna implementation worker;
+- bounded contracts;
+- one-writer guard;
+- ownership checks;
+- real diff collection;
+- worker result normalization.
+
+Exit gate: a non-trivial task demonstrably routes implementation to Luna without depending on root voluntary spawning.
+
+### R4 — Validation and acceptance
+
+Deliver:
+
+- change_id;
+- validation record;
+- stale-evidence detection;
+- root ACCEPT/CORRECT/REPLAN loop;
+- optional fresh strong-model review for high-assurance route.
+
+Exit gate: task cannot reach completed state from worker claims alone.
+
+### R5 — Quota continuity
+
+Deliver:
+
+- account/rate-limit reader;
+- error classifier;
+- `waiting_quota`;
+- reset-time persistence;
+- scheduler abstraction;
+- Windows Task Scheduler implementation first;
+- automatic app-server restart + thread resume;
+- bounded `max_resumes`;
+- repository/sandbox/model safety preflight.
+
+Exit gate: real controlled test crosses one quota/reset boundary and automatically resumes the same task/thread without manual user input.
+
+### R6 — Native Codex integration improvements
+
+Evaluate only after R0–R5 are stable:
+
+- use Codex native Goal as optional root objective;
+- native subagents for read-only parallel exploration;
+- SubagentStart/Stop telemetry;
+- plugin MCP tools for controller inspection/control;
+- macOS/Linux scheduler backends;
+- optional worktree isolation for multiple independent repositories/tasks.
+
+### R7 — Release hardening
+
+Deliver:
+
+- installation/update path;
+- migration guide from v2;
+- failure-injection tests;
+- restart/recovery matrix;
+- Windows-first real-use validation;
+- documentation;
+- release candidate.
+
+## 22. Explicit non-goals for v3 initial release
+
+Do not build:
+
+- a general distributed workflow engine;
+- a web dashboard;
+- SQLite unless file-backed state proves inadequate;
+- arbitrary nested worker trees;
+- autonomous agent-to-agent chat fabric;
+- multi-repository distributed transactions;
+- full task marketplace;
+- hidden sandbox escalation;
+- token-saving claims without measurement;
+- background busy polling.
+
+## 23. Community projects to study, not copy
+
+Use community implementations as targeted references:
+
+- Astra/Sol + Luna orchestrators for explicit model routing and worker contracts;
+- app-server based orchestrators for persistent Codex thread management;
+- auto-resume tools for quota reset parsing and session re-entry;
+- orchestrated-mode Codex forks for state-machine and role-boundary ideas.
+
+Adopt mechanisms only after they are compatible with current upstream Codex.
+
+## 24. Acceptance criteria for v3
+
+A v3 release is successful when all of the following are demonstrated on real Codex:
+
+1. Sol remains the planning/review authority.
+2. A bounded implementation can be forced through Luna by controller policy.
+3. The controller survives process restart.
+4. A root thread resumes through app-server using its persisted thread ID.
+5. Repository state, not model claims, determines completion evidence.
+6. A task hitting a real usage-window limit enters `waiting_quota` without spinning.
+7. The local scheduler wakes after the reset window even if Codex was closed.
+8. The controller confirms quota availability, resumes the same root task, and continues.
+9. Auto-resume is bounded and can stop safely for permissions, repository drift, or user decisions.
+10. Skills are optional guidance rather than the enforcement mechanism.
+
+## 25. Recommended immediate next step
+
+Do not implement R1 yet.
+
+First execute R0 as an independent capability-validation round against the currently installed/latest Codex build, especially:
+
+- app-server model selection per thread;
+- thread/resume behavior;
+- usage/rate-limit events and `resetsAt`;
+- behavior after app-server restart;
+- noninteractive Goal control availability;
+- Windows scheduler invocation of the controller;
+- approval/sandbox persistence after resume.
+
+After R0, freeze the architecture and then write one implementation specification covering R1–R5, rather than splitting into many small specification documents.
