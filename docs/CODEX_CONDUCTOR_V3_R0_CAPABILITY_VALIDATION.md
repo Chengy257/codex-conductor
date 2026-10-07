@@ -46,11 +46,24 @@ Do not hard-code protocol behavior from an alpha build.
 | Custom subagent default model | UPSTREAM VERIFIED | optional native mode only |
 | Plugin distribution to Codex CLI | UPSTREAM VERIFIED | plugin is installation/integration shell |
 | Plugin hooks always trusted/enabled | FALSE | runtime must not depend on hooks |
+| Official `openai-codex` Python SDK | UPSTREAM VERIFIED | primary controller adapter; stable SDK pins matching runtime |
 | Persistent app-server community orchestration | COMMUNITY CORROBORATED | useful R2 reference |
 | Quota auto-resume via app-server/CLI | COMMUNITY CORROBORATED | useful R5 reference |
 | Windows Task Scheduler wake | COMMUNITY CORROBORATED | first scheduler backend; local smoke required |
 
-## 4. App-server findings
+## 4. SDK and app-server findings
+
+### 4.0 Official Python SDK
+
+Current upstream ships a stable `openai-codex` Python SDK (Python >=3.10). Stable SDK releases track the corresponding stable Codex CLI and install an exact matching `openai-codex-cli-bin` runtime.
+
+The SDK already provides thread start/resume, turn execution/streaming, sandbox presets, Goal operations, model listing, authentication reuse, and a typed app-server client.
+
+**R0 decision:** v3 should use the official SDK as the primary controller transport instead of implementing a full JSON-RPC client. Keep only a narrow compatibility/protocol layer for required operations not exposed on the public high-level surface. Pin a tested SDK/runtime release per Conductor release and report any mismatch with the user's global Codex CLI in `doctor`.
+
+The authoritative managed runtime should not silently follow an arbitrary global CLI upgrade.
+
+### 4.1 Thread model selection
 
 ### 4.1 Thread model selection
 
@@ -345,12 +358,14 @@ The following v3 mainline assumptions are now supported strongly enough to retai
 
 1. **Plugin + local controller** is the correct product form.
 2. **app-server persistent threads** should be the primary Codex runtime.
-3. **explicit Luna worker threads** are preferable to prompt-only delegation.
+3. **explicit task-bound worker threads** are preferable to prompt-only delegation.
 4. **exact root and worker model bindings** can be enforced mechanically.
 5. **native Goals** can help root continuation but do not replace controller state.
 6. **structured quota state** is available.
 7. **automatic cross-window wake** still requires an external/local scheduler.
 8. **hooks are supporting controls, not the runtime.**
+9. **the official Codex Python SDK** should be the controller's primary host adapter.
+10. **managed delegate/full root threads should be read-only and have native subagent spawning disabled where the host permits it; bound workers own repository writes.**
 
 ## 11. Required mainline corrections
 
@@ -371,7 +386,7 @@ Update `CODEX_CONDUCTOR_V3_RUNTIME_REBASELINE_PLAN.md` to:
 
 These cannot be closed by repository/document inspection alone.
 
-Run against the user's real Windows Codex installation before freezing R0:
+Run against the user's real Windows environment before freezing R0. The detailed executable contract is in `CODEX_CONDUCTOR_V3_R0_SMOKE_HARNESS_SPEC.md`:
 
 ### LS-1 — environment
 
@@ -380,7 +395,8 @@ Record:
 - `codex --version`;
 - Windows version;
 - current authentication surface/account plan;
-- available models from `model/list`.
+- available models from `model/list`;
+- installed/pinned `openai-codex` SDK and matching runtime version.
 
 ### LS-2 — root binding
 
@@ -391,7 +407,9 @@ Verify:
 - requested model == response model;
 - reasoning effort;
 - provider;
-- no fallback.
+- no fallback;
+- managed native subagent spawning is disabled;
+- read-only root policy rejects a controlled write in the disposable smoke repo.
 
 Repeat with another allowed strong model to prove configurability.
 
@@ -403,7 +421,9 @@ Verify:
 
 - response model is Luna;
 - actual inference succeeds;
-- repository command/file tools work under the intended permissions.
+- repository command/file tools work under the intended permissions;
+- native subagent spawning is disabled for the managed worker;
+- bounded workspace write succeeds only in the disposable smoke repo.
 
 ### LS-4 — drift detection
 
@@ -480,4 +500,4 @@ The most important corrections discovered during R0 are:
 2. Goals are more automatable than assumed and should be integrated earlier;
 3. quota state is structured enough for a safe scheduler, but native cross-window auto-resume is still not a reliable host guarantee.
 
-R1 implementation must not begin until LS-1 through LS-8 are either passed on the target Windows environment or explicitly marked deferred with a fallback path.
+R1 implementation must not begin until the R0 smoke-harness contract is frozen and LS-1 through LS-8 are either passed on the target Windows environment or explicitly marked deferred with a non-core fallback path. LS-9 remains the R5 acceptance gate.
