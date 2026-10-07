@@ -98,6 +98,8 @@ Require same thread, exact model/provider/effort binding after resume, acceptabl
 
 On a dedicated smoke thread: set active objective → get → pause → get → block → get → reactivate → clear → confirm empty.
 
+Also verify the orchestration discipline used by v3: an active root Goal is paused before an external worker phase so the root cannot autonomously start a competing implementation/review turn.
+
 Do not fake `usageLimited` as a real quota event; use a fixture in R0 and a real event only for R5 acceptance.
 
 ### LS-7 — Quota read
@@ -121,21 +123,22 @@ After reboot, durable state survives and overdue tasks are recovered by a logon/
 LS-9 is an R5 release gate, not routine R0:
 
 ```
-active
+active root/worker/reviewer
 → real usage-window exhaustion
 → waiting_quota
-→ persist task/thread/binding/phase
+→ persist task + active role/thread/turn/work-unit + model/runtime binding + phase
 → schedule from resetsAt
 → wake
 → fresh rate-limit read
 → ordinary usage allowed
 → restart matching runtime
-→ resume same root thread with exact binding
+→ resume the same active role thread with exact binding
+→ inspect prior turn state
 → safety preflight
 → continue
 ```
 
-Evidence must prove same task id, root thread id, binding generation and exact root/worker models, bounded resume-count increment, no busy model polling, and no permission escalation.
+Evidence must prove same task id, correct resumed role/thread id, binding generation, exact role model, matching SDK/runtime identity, bounded resume-count increment, no blind duplicate write after uncertain worker interruption, no busy model polling, and no permission escalation.
 
 ## 6. Results
 
