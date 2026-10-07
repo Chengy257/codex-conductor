@@ -300,7 +300,19 @@ Minimal state:
   "route": "...",
   "status": "...",
   "root_thread_id": "...",
+  "active_execution": {
+    "role": "root|worker|reviewer",
+    "thread_id": "...",
+    "turn_id": "...",
+    "work_unit_id": null
+  },
   "active_worker": null,
+  "runtime_binding": {
+    "conductor_version": "...",
+    "openai_codex_version": "...",
+    "codex_runtime_version": "...",
+    "codex_home": "..."
+  },
   "model_binding": {
     "generation": 1,
     "root": {"model": "gpt-6.1-sol", "reasoning_effort": "high", "provider": "..."},
@@ -327,6 +339,10 @@ Recommended statuses:
 - failed
 
 Do not mirror every Codex turn event into durable task state. Persist only facts required for orchestration and recovery.
+
+The active execution checkpoint is role-aware because quota or process interruption can occur during root planning/review **or** during a worker implementation turn. Managed worker threads should be persistent until their work unit is accepted/retired so a quota boundary does not force blind re-execution.
+
+The task also records the tested runtime identity. Upgrading Conductor/SDK/runtime affects new tasks by default; an active task must not silently resume under a materially different runtime. A mismatch blocks automatic continuation until compatibility/migration is explicit.
 
 ## 9. Root/worker protocol
 
@@ -456,19 +472,20 @@ Automatic continuation must be opt-in per task.
 When a task hits a temporary usage limit:
 
 1. checkpoint controller task state;
-2. record Codex root thread ID and the interrupted phase;
-3. capture the server-provided reset timestamp when available;
+2. record the active execution role, thread ID, turn/work-unit identity, exact model binding and interrupted phase;
+3. capture the server-provided reset timestamp/limit identity when available;
 4. transition to `waiting_quota`;
 5. release resources that should not remain live while waiting;
 6. create a local wake record;
 7. sleep without model calls;
 8. at/after the reset time, query account/rate-limit state again;
 9. only resume when ordinary usage is confirmed available;
-10. reconnect/start app-server if needed;
-11. `thread/resume` the persisted root thread;
-12. start a continuation turn carrying a compact controller checkpoint;
-13. revalidate repository state and permissions before writes;
-14. continue until task completion, user input, a non-quota blocker, or the configured resume budget is exhausted.
+10. reconnect/start the task-bound SDK/runtime if needed;
+11. resume the persisted **active role thread** (root, worker, or reviewer) with its exact binding;
+12. inspect the prior turn state before deciding whether a continuation turn is needed; never duplicate an uncertain write blindly;
+13. start a continuation turn carrying a compact controller checkpoint when appropriate;
+14. revalidate repository state, runtime identity, model binding and permissions before writes;
+15. continue until task completion, user input, a non-quota blocker, or the configured resume budget is exhausted.
 
 ### 13.4 Wake scheduler
 
@@ -516,8 +533,9 @@ Before every automatic resumed write phase verify:
 - no conflicting external changes invalidate the task contract;
 - writer guard is acquirable;
 - effective approval/sandbox profile is acceptable;
-- worker model is still available;
-- usage is actually available.
+- task-bound runtime/SDK identity is compatible;
+- the active role's pinned model is still available;
+- usage for the relevant limit is actually available.
 
 If any check fails, stop at `waiting_user` or `blocked`.
 
@@ -527,13 +545,16 @@ Codex Goals are useful but are not the v3 scheduler.
 
 R0 confirms that current app-server exposes noninteractive `thread/goal/set`, `thread/goal/get`, and `thread/goal/clear`, with goal states including `active`, `paused`, `blocked`, `usageLimited`, `budgetLimited`, and `complete`.
 
-Therefore native Goal integration moves earlier into the root-session runtime:
+Therefore native Goal integration moves earlier into the root-session runtime, but **not** as the core execution scheduler:
 
-- the root thread may use a native Goal as its persistent objective;
+- the root thread may store a native Goal as its persistent objective;
 - Conductor may read/update Goal state through app-server;
-- `usageLimited` can be mapped into the Conductor quota-continuity path;
+- core root turns are still started explicitly by the Controller;
+- before dispatching an external worker, Conductor pauses an active root Goal so it cannot autonomously start competing root turns;
+- after worker evidence is integrated, Conductor may reactivate/update the Goal under Controller control;
+- `usageLimited` can be mapped into the Conductor quota-continuity path when Goal mode is active;
 - Goal state remains thread-local semantic state, not the authoritative cross-process scheduler;
-- controller state remains authoritative for model binding, repository guards, quota wake scheduling, validation, and acceptance;
+- controller state remains authoritative for model/runtime binding, repository guards, quota wake scheduling, validation, and acceptance;
 - automatic cross-window resume remains external/local because Codex still does not provide a reliable general host guarantee for unattended quota-window wake.
 
 ## 15. SDK-backed controller
@@ -751,7 +772,7 @@ Deliver:
 - reset-time persistence;
 - scheduler abstraction;
 - Windows Task Scheduler implementation first;
-- automatic app-server restart + thread resume;
+- automatic SDK/runtime restart + role-aware thread resume;
 - bounded `max_resumes`;
 - repository/sandbox/model safety preflight.
 
@@ -813,7 +834,7 @@ A v3 release is successful when all of the following are demonstrated on real Co
 1. The task-selected strong root model remains the planning/review authority.
 2. A bounded implementation can be forced through the task-selected economical worker model by controller policy.
 3. The controller survives process restart.
-4. A root thread resumes through app-server using its persisted thread ID.
+4. Root and worker threads can resume through the managed runtime using persisted thread IDs without changing their bindings.
 5. Repository state, not model claims, determines completion evidence.
 6. A task hitting a real usage-window limit enters `waiting_quota` without spinning.
 7. The local scheduler wakes after the reset window even if Codex was closed.
