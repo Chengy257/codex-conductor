@@ -13,7 +13,7 @@ It is a Codex-native orchestration product composed of:
 
 1. a portable Codex plugin for installation, commands, hooks, small model-visible skills, and optional MCP tool exposure;
 2. a local deterministic controller/runtime that owns durable task state, model routing, worker dispatch, validation bookkeeping, quota continuity, and recovery;
-3. Codex itself as the execution substrate, primarily through `codex app-server` persistent threads, with `codex exec` as a bounded one-shot/fallback execution path.
+3. Codex itself as the execution substrate, primarily through the official `openai-codex` Python SDK backed by persistent `codex app-server` threads, with `codex exec` retained only as a bounded compatibility/emergency path.
 
 The strong root model remains responsible for semantic work: architecture, ambiguity resolution, task decomposition, routing decisions, change control, review, and final acceptance. Cheap workers perform bounded exploration and implementation.
 
@@ -43,7 +43,6 @@ Recommended layout:
 
 ```
 codex-conductor/
-├─ plugin.json
 ├─ .codex-plugin/
 │  └─ plugin.json
 ├─ skills/
@@ -96,9 +95,11 @@ It must remain smaller than a general-purpose workflow engine.
 
 ## 4. Codex-native execution substrate
 
-### 4.1 Primary: persistent `codex app-server`
+### 4.1 Primary: official Codex Python SDK over persistent app-server
 
-Use app-server as the primary runtime for meaningful work because it exposes persistent Codex threads and can resume them after process restart.
+Use the published `openai-codex` Python SDK as the primary controller adapter. Stable SDK releases pin a matching Codex CLI runtime and already expose persistent threads, turn execution/streaming, sandbox presets, Goal operations, model listing, and thread resume.
+
+Do not hand-roll the full JSON-RPC client. Keep a narrow protocol adapter only for capabilities not yet present on the public high-level SDK surface.
 
 The controller should:
 
@@ -112,7 +113,15 @@ The controller should:
 
 The app-server is the preferred basis for long-running sessions and quota recovery.
 
-### 4.2 Secondary: `codex exec`
+### 4.2 Runtime-version policy
+
+The managed runtime should pin one tested `openai-codex` SDK release and its matching runtime rather than silently following whatever global Codex binary happens to be installed. `doctor` records SDK/runtime/global-CLI versions and reports mismatches.
+
+An explicit compatibility mode may point `CodexConfig.codex_bin` at a system Codex binary, but it is not the default correctness path.
+
+Python baseline: follow the SDK requirement (currently Python >=3.10); select the project-wide concrete Python version during R1 packaging.
+
+### 4.3 Secondary: `codex exec`
 
 Use `codex exec` for:
 
@@ -123,7 +132,7 @@ Use `codex exec` for:
 
 Do not make `codex exec` the authoritative long-lived task store.
 
-### 4.3 Native Codex subagents
+### 4.4 Native Codex subagents
 
 Native subagents remain available as an optimization, but v3 must not rely on them for the core guarantee that implementation uses the task-selected worker model.
 
@@ -203,18 +212,20 @@ No model-facing tool may mutate the binding.
 
 A future user-only `task rebind-model` operation may be added, but it must run only with no active turn/worker, increment a binding generation, journal the decision, and invalidate stale validation/review. Initial v3 may simply require a new task.
 
-## 6. Routing model
+## 6. Managed routing model
 
-Retain a simple four-mode routing model:
+The managed v3 guarantee is stronger than the old skill routing: repository-writing implementation goes through the task-bound worker model. The strong root plans/reviews and remains read-only for managed write tasks.
+
+Retain the route names for compatibility, but constrain their meaning:
 
 | Delegability | Assurance | Route | Implementation | Independent review |
 |---|---|---|---|---|
-| low | standard | solo | root | no |
+| low | standard | solo | root analysis/non-writing work; write requires explicit user opt-in | no |
 | high | standard | delegate | bound worker model | no |
-| low | high | audit | root | yes |
+| low | high | audit | root analysis + independent review; write requires explicit user opt-in | yes |
 | high | high | full | bound worker model | yes |
 
-A non-trivial bounded implementation defaults to `delegate`.
+Any managed repository-writing implementation defaults to `delegate`; ambiguity is resolved by further root planning/exploration or user input, not by silently letting the root implement.
 
 The controller, not the skill, should enforce the selected route.
 
@@ -501,9 +512,9 @@ Therefore native Goal integration moves earlier into the root-session runtime:
 - controller state remains authoritative for model binding, repository guards, quota wake scheduling, validation, and acceptance;
 - automatic cross-window resume remains external/local because Codex still does not provide a reliable general host guarantee for unattended quota-window wake.
 
-## 15. App-server controller
+## 15. SDK-backed controller
 
-Implement a thin protocol client with:
+Implement a thin Conductor adapter around the official Codex Python SDK, with a narrow typed raw-protocol escape hatch only where required. It must support:
 
 - process start/stop/reconnect;
 - initialize handshake;
@@ -518,13 +529,15 @@ Implement a thin protocol client with:
 
 Do not expose raw JSON-RPC details to users.
 
+Authoritative managed execution is runtime-first: tasks launched through `codex-conductor run` / equivalent controller entrypoints receive the hard model, sandbox and continuity guarantees. The Codex plugin is a convenience/integration front door; an arbitrary pre-existing Codex session is not silently claimed as managed.
+
 Initial architecture:
 
 ```
-Codex Conductor CLI / Plugin
+Codex Plugin / codex-conductor CLI
           |
           v
-Local Controller
+Local Controller (official Codex Python SDK)
   |       |        |
   |       |        +-- Scheduler / Wake
   |       +----------- State + Guards
@@ -662,7 +675,7 @@ No multi-agent implementation yet.
 
 Deliver:
 
-- managed app-server adapter;
+- official Codex Python SDK adapter with version compatibility checks;
 - root thread start/resume with exact task-frozen model binding;
 - turn lifecycle;
 - structured event/error normalization;
