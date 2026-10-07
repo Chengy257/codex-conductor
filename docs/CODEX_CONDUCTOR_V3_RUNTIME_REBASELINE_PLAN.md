@@ -93,6 +93,28 @@ It owns:
 
 It must remain smaller than a general-purpose workflow engine.
 
+### 3.3 Two entry surfaces
+
+v3 distinguishes two product surfaces:
+
+**Managed Runtime (authoritative)**
+
+```
+codex-conductor run <task>
+codex-conductor attach <task-id>
+codex-conductor status <task-id>
+```
+
+The controller creates and owns the root thread through the official Codex SDK. Only this path promises task-frozen model binding, root/worker sandbox boundaries, deterministic worker dispatch, durable task state, and cross-quota automatic continuation.
+
+**Plugin Bridge (convenience)**
+
+The Codex plugin may expose a small skill and controller tools such as start/status/attach. A normal pre-existing Codex thread can launch or inspect a managed Conductor task, but that caller thread is not automatically treated as the managed root.
+
+Do not claim full v3 guarantees for an arbitrary existing Codex session unless a future host API allows Conductor to adopt and verify that exact thread safely.
+
+This separation lets the project provide a good Codex-native entry point without making correctness depend on plugin prompt compliance or hook reliability.
+
 ## 4. Codex-native execution substrate
 
 ### 4.1 Primary: official Codex Python SDK over persistent app-server
@@ -187,7 +209,9 @@ Once a task becomes active, its model binding is frozen:
 - the root model may not choose a different worker model during execution;
 - a worker may not select or spawn itself under another model.
 
-Every root/worker `thread/start` and `thread/resume` must use and verify the stored binding.
+Every root/worker start/resume must use and verify the stored binding. Model ID, provider and reasoning effort are all binding fields.
+
+Because current SDK/app-server surfaces do not expose identical parameters on every start/resume helper, the controller must establish the full binding **before the first task turn**: request the exact model, apply the pinned effort through the supported SDK/config/settings path, read/observe the resulting effective settings, and fail closed on mismatch. After resume it re-verifies/re-applies the pinned effort before continuing.
 
 App-server's `allowProviderModelFallback` must remain false. Missing/unavailable model access is a launch or resume blocker, never a reason to inherit/fallback silently.
 
@@ -214,18 +238,18 @@ A future user-only `task rebind-model` operation may be added, but it must run o
 
 ## 6. Managed routing model
 
-The managed v3 guarantee is stronger than the old skill routing: repository-writing implementation goes through the task-bound worker model. The strong root plans/reviews and remains read-only for managed write tasks.
+The managed v3 guarantee is stronger than the old skill routing: repository-writing implementation goes through the task-bound worker model. The strong root plans/reviews and remains read-only for managed write tasks. Managed root and worker threads also disable native subagent spawning where supported so neither role can bypass controller model routing.
 
 Retain the route names for compatibility, but constrain their meaning:
 
 | Delegability | Assurance | Route | Implementation | Independent review |
 |---|---|---|---|---|
-| low | standard | solo | root analysis/non-writing work; write requires explicit user opt-in | no |
+| low | standard | solo | root analysis/non-writing work; managed root-write requires explicit user opt-in/escape mode | no |
 | high | standard | delegate | bound worker model | no |
-| low | high | audit | root analysis + independent review; write requires explicit user opt-in | yes |
+| low | high | audit | root analysis + independent review; managed root-write requires explicit user opt-in/escape mode | yes |
 | high | high | full | bound worker model | yes |
 
-Any managed repository-writing implementation defaults to `delegate`; ambiguity is resolved by further root planning/exploration or user input, not by silently letting the root implement.
+Any managed repository-writing implementation defaults to `delegate`; ambiguity is resolved by further root planning/exploration or user input, not by silently letting the root implement. Initial v3 may omit automatic root-write entirely and keep it only as an explicit escape mode.
 
 The controller, not the skill, should enforce the selected route.
 
