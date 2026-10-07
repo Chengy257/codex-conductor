@@ -19,7 +19,49 @@ The strong root model remains responsible for semantic work: architecture, ambig
 
 The v3 design must not depend on the root model voluntarily remembering to spawn workers. Delegation and continuation become controller actions.
 
-## 2. Relationship to glm-conductor
+## 2. Platform scope
+
+Codex Conductor v3 is **CLI/runtime-first**, not Windows-App-first.
+
+Tier-1 execution targets:
+
+- **Linux Codex CLI** — native/headless terminal use is a primary path.
+- **Windows Codex CLI** — PowerShell/terminal use is a primary path.
+
+Optional integration surfaces:
+
+- Codex Desktop/App plugin bridge;
+- WSL2 Linux CLI, treated as a Linux runtime with scheduler capability detected from the actual environment;
+- macOS CLI, targeted after the dual Windows/Linux Tier-1 path is stable.
+
+The core Controller, task state machine, model binding, app-server/SDK integration, repository guards, validation, and quota classification must be platform-neutral.
+
+Only OS lifecycle integration is platform-specific:
+
+```
+common runtime
+    |
+    +-- Windows scheduler adapter -> Task Scheduler
+    +-- Linux scheduler adapter   -> systemd --user service/timer
+    +-- portable fallback         -> codex-conductor supervise
+```
+
+The project must not require a graphical Codex application for normal operation. A headless Linux host with Codex authentication and the supported SDK/runtime must be able to run managed tasks.
+
+### 2.1 Linux continuity boundary
+
+The primary Linux unattended-wake backend is `systemd --user` service/timer where a user systemd manager is available.
+
+For headless/server use:
+
+- durable task state must survive shell logout and process restart;
+- a user service/timer may resume work without an interactive terminal;
+- `loginctl enable-linger` may enable user services without an active login, but Conductor must not silently change linger/system policy;
+- if user-systemd is unavailable (minimal container, some WSL setups), fall back to `codex-conductor supervise` and report reduced continuity capability in `doctor`.
+
+No root daemon is required for the initial v3 design.
+
+## 3. Relationship to glm-conductor
 
 `glm-conductor` is a design reference only. ZCode-specific Native Workflow, Scheduled Task, plugin hooks, and workflow execution APIs are not portable to Codex and must not be copied as implementation assumptions.
 
@@ -35,9 +77,9 @@ The transferable principles are:
 
 For Codex, the host/runtime boundary is different. Codex app-server owns thread/turn execution and native session state; Codex Conductor owns cross-turn task semantics and orchestration state that Codex does not yet guarantee.
 
-## 3. Product shape
+## 4. Product shape
 
-### 3.1 Plugin layer
+### 4.1 Plugin layer
 
 Recommended layout:
 
@@ -65,7 +107,7 @@ codex-conductor/
 
 The plugin is the installable shell. It should not contain the orchestration logic in prose.
 
-### 3.2 Runtime/controller layer
+### 4.2 Runtime/controller layer
 
 The runtime is a local Python package and CLI, initially invoked as:
 
@@ -93,7 +135,7 @@ It owns:
 
 It must remain smaller than a general-purpose workflow engine.
 
-### 3.3 Two entry surfaces
+### 4.3 Two entry surfaces
 
 v3 distinguishes two product surfaces:
 
@@ -115,9 +157,9 @@ Do not claim full v3 guarantees for an arbitrary existing Codex session unless a
 
 This separation lets the project provide a good Codex-native entry point without making correctness depend on plugin prompt compliance or hook reliability.
 
-## 4. Codex-native execution substrate
+## 5. Codex-native execution substrate
 
-### 4.1 Primary: official Codex Python SDK over persistent app-server
+### 5.1 Primary: official Codex Python SDK over persistent app-server
 
 Use the published `openai-codex` Python SDK as the primary controller adapter. Stable SDK releases pin a matching Codex CLI runtime and already expose persistent threads, turn execution/streaming, sandbox presets, Goal operations, model listing, and thread resume.
 
@@ -135,7 +177,7 @@ The controller should:
 
 The app-server is the preferred basis for long-running sessions and quota recovery.
 
-### 4.2 Runtime-version policy
+### 5.2 Runtime-version policy
 
 The managed runtime should pin one tested `openai-codex` SDK release and its matching runtime rather than silently following whatever global Codex binary happens to be installed. `doctor` records SDK/runtime/global-CLI versions and reports mismatches.
 
@@ -143,7 +185,7 @@ An explicit compatibility mode may point `CodexConfig.codex_bin` at a system Cod
 
 Python baseline: follow the SDK requirement (currently Python >=3.10); select the project-wide concrete Python version during R1 packaging.
 
-### 4.3 Secondary: `codex exec`
+### 5.3 Secondary: `codex exec`
 
 Use `codex exec` for:
 
@@ -154,7 +196,7 @@ Use `codex exec` for:
 
 Do not make `codex exec` the authoritative long-lived task store.
 
-### 4.4 Native Codex subagents
+### 5.4 Native Codex subagents
 
 Native subagents remain available as an optimization, but v3 must not rely on them for the core guarantee that implementation uses the task-selected worker model.
 
@@ -167,7 +209,7 @@ Reasons:
 
 Therefore the default v3 worker is an independently launched Codex worker thread/process explicitly pinned to the task's exact worker-model binding. Native subagents can later be enabled for bounded parallel read-only work after runtime validation.
 
-## 5. Model topology and task-frozen model binding
+## 6. Model topology and task-frozen model binding
 
 The architecture is role-based rather than permanently tied to one model generation.
 
@@ -192,13 +234,13 @@ Optional Reviewer
   only for high-assurance tasks
 ```
 
-### 5.1 Model profiles are defaults, not active-task identities
+### 6.1 Model profiles are defaults, not active-task identities
 
 User/global configuration may define future-proof profiles such as `strong` and `worker` with preferred model lists. This lets new model generations replace today's defaults without redesigning the runtime.
 
 At task creation, profiles are resolved to exact model IDs and reasoning efforts. The exact resolved values are persisted in task state.
 
-### 5.2 Task binding invariant
+### 6.2 Task binding invariant
 
 Once a task becomes active, its model binding is frozen:
 
@@ -215,7 +257,7 @@ Because current SDK/app-server surfaces do not expose identical parameters on ev
 
 App-server's `allowProviderModelFallback` must remain false. Missing/unavailable model access is a launch or resume blocker, never a reason to inherit/fallback silently.
 
-### 5.3 Drift and reroute detection
+### 6.3 Drift and reroute detection
 
 App-server permits model changes through thread settings and resume overrides, and can emit `model/rerouted` for platform-managed rerouting.
 
@@ -228,7 +270,7 @@ The controller must therefore:
 
 A non-matching worker result is not valid acceptance evidence.
 
-### 5.4 Explicit migration only
+### 6.4 Explicit migration only
 
 If a pinned model is retired or becomes unavailable, the task transitions to `waiting_user`.
 
@@ -236,7 +278,7 @@ No model-facing tool may mutate the binding.
 
 A future user-only `task rebind-model` operation may be added, but it must run only with no active turn/worker, increment a binding generation, journal the decision, and invalidate stale validation/review. Initial v3 may simply require a new task.
 
-## 6. Managed routing model
+## 7. Managed routing model
 
 The managed v3 guarantee is stronger than the old skill routing: repository-writing implementation goes through the task-bound worker model. The strong root plans/reviews and remains read-only for managed write tasks. Managed root and worker threads also disable native subagent spawning where supported so neither role can bypass controller model routing.
 
@@ -255,7 +297,7 @@ The controller, not the skill, should enforce the selected route.
 
 The root may still revise a route when new evidence appears, but the revision must be written into task state before execution changes.
 
-## 7. Task contract
+## 8. Task contract
 
 A delegated unit must contain at least:
 
@@ -280,7 +322,7 @@ The runtime should validate:
 
 The first v3 release should default to one active write worker per repository. Parallelism is permitted for read-only exploration. Parallel write support can be added only after ownership conflict handling is proven.
 
-## 8. Durable task state
+## 9. Durable task state
 
 Store runtime state outside normal source files, preferably under:
 
@@ -344,7 +386,7 @@ The active execution checkpoint is role-aware because quota or process interrupt
 
 The task also records the tested runtime identity. Upgrading Conductor/SDK/runtime affects new tasks by default; an active task must not silently resume under a materially different runtime. A mismatch blocks automatic continuation until compatibility/migration is explicit.
 
-## 9. Root/worker protocol
+## 10. Root/worker protocol
 
 The root produces a structured implementation contract. The controller validates and dispatches it.
 
@@ -372,11 +414,11 @@ Root outcome:
 - REPLAN
 - WAIT_USER
 
-## 10. Repository safety and freshness
+## 11. Repository safety and freshness
 
 Port the useful deterministic ideas, but reimplement them for Codex.
 
-### 10.1 Writer guard
+### 11.1 Writer guard
 
 Default invariant:
 
@@ -384,7 +426,7 @@ Default invariant:
 
 The guard must be process-safe and survive controller crashes. It must never expire merely because time passed. Recovery requires inspection and explicit force release or proof that the owning task is terminal.
 
-### 10.2 Ownership guard
+### 11.2 Ownership guard
 
 Before acceptance:
 
@@ -394,7 +436,7 @@ actual changed paths ⊆ declared task ownership
 
 Violations block completion.
 
-### 10.3 Change freshness
+### 11.3 Change freshness
 
 Compute a deterministic `change_id` from:
 
@@ -406,7 +448,7 @@ Validation and review records bind to `change_id`.
 
 Any subsequent relevant repository modification invalidates stale validation/review.
 
-## 11. Codex hooks
+## 12. Codex hooks
 
 Hooks are supporting instrumentation, not the primary scheduler.
 
@@ -422,7 +464,7 @@ Do not implement orchestration loops inside hooks.
 
 Hooks must degrade visibly if untrusted or unavailable; the controller remains authoritative.
 
-## 12. Skills
+## 13. Skills
 
 Keep one small conductor skill for user/model-facing semantics:
 
@@ -435,11 +477,11 @@ The skill must not pretend to enforce model routing, worker launch, quota resume
 
 Target: approximately 30–60 lines, not a runtime specification.
 
-## 13. Quota-aware execution
+## 14. Quota-aware execution
 
 This is a first-class v3 capability.
 
-### 13.1 Inputs
+### 14.1 Inputs
 
 The runtime should consume structured Codex/app-server usage information when available, including:
 
@@ -452,7 +494,7 @@ The runtime should consume structured Codex/app-server usage information when av
 
 Do not infer recovery only from elapsed time or percentages when the backend provides an explicit availability flag.
 
-### 13.2 Quota failure classification
+### 14.2 Quota failure classification
 
 Separate:
 
@@ -465,7 +507,7 @@ Separate:
 
 Only true temporary usage-window exhaustion enters `waiting_quota`.
 
-### 13.3 Automatic wake design
+### 14.3 Automatic wake design
 
 Automatic continuation must be opt-in per task.
 
@@ -487,22 +529,25 @@ When a task hits a temporary usage limit:
 14. revalidate repository state, runtime identity, model binding and permissions before writes;
 15. continue until task completion, user input, a non-quota blocker, or the configured resume budget is exhausted.
 
-### 13.4 Wake scheduler
+### 14.4 Wake scheduler
 
 Do not depend on the Codex process remaining alive.
 
 Implement a small local supervisor/scheduler.
 
-Cross-platform target:
+Tier-1 scheduler backends:
 
-- Windows: Task Scheduler backend;
-- Linux: systemd user timer or durable supervisor;
-- macOS: launchd;
+- Windows CLI: Task Scheduler;
+- Linux CLI: `systemd --user` service/timer;
 - portable fallback: foreground `codex-conductor supervise`.
 
-The runtime should expose a common scheduler adapter rather than embedding OS-specific behavior in task logic.
+Tier-2 after v3 stabilization:
 
-### 13.5 Bounded continuity
+- macOS: launchd.
+
+The scheduler interface is shared; task/quota logic must not contain OS-specific branches beyond the adapter boundary. Linux and Windows have equal priority for the v3 release.
+
+### 14.5 Bounded continuity
 
 State:
 
@@ -524,7 +569,7 @@ Rules:
 - repeated quota errors immediately after wake use bounded backoff and fresh rate-limit checks;
 - never spin/busy-wait with model calls.
 
-### 13.6 Resume safety gate
+### 14.6 Resume safety gate
 
 Before every automatic resumed write phase verify:
 
@@ -539,7 +584,7 @@ Before every automatic resumed write phase verify:
 
 If any check fails, stop at `waiting_user` or `blocked`.
 
-## 14. Native Goals integration
+## 15. Native Goals integration
 
 Codex Goals are useful but are not the v3 scheduler.
 
@@ -557,7 +602,7 @@ Therefore native Goal integration moves earlier into the root-session runtime, b
 - controller state remains authoritative for model/runtime binding, repository guards, quota wake scheduling, validation, and acceptance;
 - automatic cross-window resume remains external/local because Codex still does not provide a reliable general host guarantee for unattended quota-window wake.
 
-## 15. SDK-backed controller
+## 16. SDK-backed controller
 
 Implement a thin Conductor adapter around the official Codex Python SDK, with a narrow typed raw-protocol escape hatch only where required. It must support:
 
@@ -594,7 +639,7 @@ Local Controller (official Codex Python SDK)
                bound root    bound workers
 ```
 
-## 16. Worker execution strategy
+## 17. Worker execution strategy
 
 Phase 1 should favor independent bounded worker launches rather than deep native subagent trees.
 
@@ -606,7 +651,7 @@ Preferred order:
 
 This makes model routing observable and deterministic.
 
-## 17. Observability
+## 18. Observability
 
 Provide:
 
@@ -634,7 +679,7 @@ Record:
 
 Do not build a full tracing platform in v3.
 
-## 18. Recovery
+## 19. Recovery
 
 Required recovery scenarios:
 
@@ -651,7 +696,7 @@ Required recovery scenarios:
 
 The runtime must be able to reconstruct the task from controller state plus real repository state without relying on a live child-agent tree.
 
-## 19. Security and permissions
+## 20. Security and permissions
 
 The runtime must respect Codex sandbox/approval behavior rather than bypassing it by default.
 
@@ -666,7 +711,7 @@ Do not silently escalate:
 
 A resumed task that requires stronger authority transitions to `waiting_user`.
 
-## 20. Migration from current codex-conductor
+## 21. Migration from current codex-conductor
 
 Current assets:
 
@@ -687,7 +732,7 @@ Migration:
 
 This is a deliberate v3 breaking architecture change.
 
-## 21. Implementation phases
+## 22. Implementation phases
 
 ### R0 — Capability validation and architecture freeze
 
@@ -771,7 +816,9 @@ Deliver:
 - `waiting_quota`;
 - reset-time persistence;
 - scheduler abstraction;
-- Windows Task Scheduler implementation first;
+- Windows Task Scheduler backend;
+- Linux `systemd --user` service/timer backend;
+- portable foreground supervisor fallback;
 - automatic SDK/runtime restart + role-aware thread resume;
 - bounded `max_resumes`;
 - repository/sandbox/model safety preflight.
@@ -786,7 +833,8 @@ Evaluate only after R0–R5 are stable:
 - native subagents for read-only parallel exploration;
 - SubagentStart/Stop telemetry;
 - plugin MCP tools for controller inspection/control;
-- macOS/Linux scheduler backends;
+- macOS launchd backend;
+- optional Linux non-systemd scheduler adapters if real demand remains;
 - optional worktree isolation for multiple independent repositories/tasks.
 
 ### R7 — Release hardening
@@ -797,11 +845,11 @@ Deliver:
 - migration guide from v2;
 - failure-injection tests;
 - restart/recovery matrix;
-- Windows-first real-use validation;
+- Windows CLI and Linux CLI real-use validation;
 - documentation;
 - release candidate.
 
-## 22. Explicit non-goals for v3 initial release
+## 23. Explicit non-goals for v3 initial release
 
 Do not build:
 
@@ -816,7 +864,7 @@ Do not build:
 - token-saving claims without measurement;
 - background busy polling.
 
-## 23. Community projects to study, not copy
+## 24. Community projects to study, not copy
 
 Use community implementations as targeted references:
 
@@ -827,7 +875,7 @@ Use community implementations as targeted references:
 
 Adopt mechanisms only after they are compatible with current upstream Codex.
 
-## 24. Acceptance criteria for v3
+## 25. Acceptance criteria for v3
 
 A v3 release is successful when all of the following are demonstrated on real Codex:
 
@@ -837,12 +885,12 @@ A v3 release is successful when all of the following are demonstrated on real Co
 4. Root and worker threads can resume through the managed runtime using persisted thread IDs without changing their bindings.
 5. Repository state, not model claims, determines completion evidence.
 6. A task hitting a real usage-window limit enters `waiting_quota` without spinning.
-7. The local scheduler wakes after the reset window even if Codex was closed.
+7. On both Tier-1 platforms, the local scheduler/supervisor can wake after the reset window even if the invoking Codex terminal was closed.
 8. The controller confirms quota availability, resumes the same root task, and continues.
 9. Auto-resume is bounded and can stop safely for permissions, repository drift, or user decisions.
 10. Skills are optional guidance rather than the enforcement mechanism.
 
-## 25. Recommended immediate next step
+## 26. Recommended immediate next step
 
 Do not implement R1 yet.
 
@@ -855,7 +903,8 @@ First execute R0 as an independent capability-validation round against the curre
 - usage/rate-limit events and `resetsAt`;
 - behavior after app-server restart;
 - noninteractive Goal control availability;
-- Windows scheduler invocation of the controller;
+- Windows Task Scheduler invocation of the controller;
+- Linux `systemd --user` service/timer invocation of the controller;
 - approval/sandbox persistence after resume.
 
 After R0, freeze the architecture and then write one implementation specification covering R1–R5, rather than splitting into many small specification documents.
