@@ -125,7 +125,7 @@ Do not make `codex exec` the authoritative long-lived task store.
 
 ### 4.3 Native Codex subagents
 
-Native subagents remain available as an optimization, but v3 must not rely on them for the core guarantee that implementation uses Luna.
+Native subagents remain available as an optimization, but v3 must not rely on them for the core guarantee that implementation uses the task-selected worker model.
 
 Reasons:
 
@@ -134,7 +134,7 @@ Reasons:
 - multi-agent behavior can consume quota unexpectedly;
 - nested agent trees are harder to bound than explicit controller dispatch.
 
-Therefore the default v3 worker model is an independently launched Codex worker thread/process explicitly pinned to Luna. Native subagents can later be enabled for bounded parallel read-only work after runtime validation.
+Therefore the default v3 worker is an independently launched Codex worker thread/process explicitly pinned to the task's exact worker-model binding. Native subagents can later be enabled for bounded parallel read-only work after runtime validation.
 
 ## 5. Model topology and task-frozen model binding
 
@@ -210,9 +210,9 @@ Retain a simple four-mode routing model:
 | Delegability | Assurance | Route | Implementation | Independent review |
 |---|---|---|---|---|
 | low | standard | solo | root | no |
-| high | standard | delegate | Luna worker | no |
+| high | standard | delegate | bound worker model | no |
 | low | high | audit | root | yes |
-| high | high | full | Luna worker | yes |
+| high | high | full | bound worker model | yes |
 
 A non-trivial bounded implementation defaults to `delegate`.
 
@@ -533,7 +533,7 @@ Local Controller
                            v
                     Codex app-server
                       |           |
-                  Sol root     Luna workers
+               bound root    bound workers
 ```
 
 ## 16. Worker execution strategy
@@ -667,11 +667,13 @@ Deliver:
 - turn lifecycle;
 - structured event/error normalization;
 - thread persistence;
+- native Goal set/get/clear baseline integration;
+- Goal state preservation/readback across resume;
 - restart/reconnect tests.
 
 Exit gate: a root task survives app-server/controller restart.
 
-### R3 — Deterministic Luna delegation
+### R3 — Deterministic bound-worker delegation
 
 Deliver:
 
@@ -687,7 +689,7 @@ Deliver:
 - real diff collection;
 - worker result normalization.
 
-Exit gate: a non-trivial task demonstrably routes implementation to Luna without depending on root voluntary spawning.
+Exit gate: a non-trivial task demonstrably routes implementation to the task's pinned worker model without depending on root voluntary spawning.
 
 ### R4 — Validation and acceptance
 
@@ -706,6 +708,7 @@ Exit gate: task cannot reach completed state from worker claims alone.
 Deliver:
 
 - account/rate-limit reader;
+- Goal `usageLimited` mapping when a native Goal is active;
 - error classifier;
 - `waiting_quota`;
 - reset-time persistence;
